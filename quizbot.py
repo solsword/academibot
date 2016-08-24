@@ -19,7 +19,7 @@ def process(message):
   body = message["body"]
   cmds = commands.parse(body)
   if cmds:
-    response = commands.handle_commands(cmds)
+    response = commands.handle_commands(message, cmds)
     send_reply(message, response)
 
 def send_reply(message, response):
@@ -57,6 +57,9 @@ def main():
   config.PASSWORD = getpass.getpass(
     "Enter password for user '{}':".format(config.USERNAME)
   )
+  print("...setting up storage...")
+  storage.setup()
+  print("...done...")
   try:
     CON = async.Connection(
       config.MYADDR,

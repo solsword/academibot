@@ -15,3 +15,4 @@ INTERVAL = 10
 
 # Storage config
 DATABASE = "quizbot.db"
+SUBMISSIONS_DIR = "submissions"
