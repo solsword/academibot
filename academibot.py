@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-quizbot.py
-Bot that responds to email commands and administers quizzes.
+academibotbot.py
+Email bot for managing classes, including assignment submission, gradebook
+management, and automatic grading.
 """
 
 import async
@@ -17,9 +18,17 @@ SEND_QUEUE = []
 
 def process(message):
   body = message["body"]
+  user = message["from"] # TODO: better here!
   cmds = commands.parse(body)
+  if storage.status(user) == "blocking":
+    unblock = False
+    for (c, args) in cmds:
+      if c["name"] == "unblock":
+        unblock = True
+    if not unblock:
+      return
   if cmds:
-    response = commands.handle_commands(message, cmds)
+    response = commands.handle_commands(user, message, cmds)
     send_reply(message, response)
 
 def send_reply(message, response):
@@ -29,7 +38,7 @@ def send_reply(message, response):
     "body": response,
     "references": "{}{}".format(
       message["references"] + " " if message["references"] else "",
-      str(message["uid"]),
+      message["mid"],
     ),
   }
   SEND_QUEUE.append(reply)
@@ -52,7 +61,7 @@ def flush_send_queue():
   CON.done_sending()
 
 def main():
-  print("Starting quizbot for:")
+  print("Starting academibot for:")
   print(config.MYADDR)
   config.PASSWORD = getpass.getpass(
     "Enter password for user '{}':".format(config.USERNAME)
@@ -68,6 +77,8 @@ def main():
     )
     while True:
       try:
+        print("...cleaning auth tokens...")
+        storage.clean_tokens()
         print("...checking mail...")
         CON.prepare_receive()
         messages = CON.check_mail()
@@ -88,7 +99,7 @@ def main():
         )
   except KeyboardInterrupt:
     pass
-  print("Exiting quizbot (incoming email will be ignored).")
+  print("Exiting academibot (incoming email will be ignored).")
 
 if __name__ == "__main__":
   main()

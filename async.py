@@ -21,7 +21,8 @@ class ConnectionError(RuntimeError):
   pass
 
 class Connection:
-  def __init__(self, address, username, password):
+  def __init__(self, name, address, username, password):
+    self.name = name
     self.address = address
     self.username = username
     self.password = password
@@ -85,7 +86,7 @@ class Connection:
     msg = MIMEMultipart()
     msg["From"] = self.address
     msg["To"] = email.utils.COMMASPACE.join(to)
-    msg["Subject"] = "{quizbot} " + subject
+    msg["Subject"] = "{" + self.name + "} " + subject
     msg["References"] = references
     if body:
       msg.attach(MIMEText(body))
@@ -93,7 +94,11 @@ class Connection:
       msg.attach(a)
     msg.attach(
       MIMEText(
-        "This is an automated message sent by quizbot.email@gmail.com."
+        """
+This is an automated message sent by {address}.
+
+To halt all further messages from {address}, reply with the text ":block"
+""".format(address = self.address)
       )
     )
     self.smtp_server.sendmail(self.username, to, msg.as_string())
@@ -124,6 +129,7 @@ class Connection:
       messages.append(
         {
           'uid': uid,
+          'mid': msg["Message-Id"] if "Message-Id" in msg else "?",
           'from': email.utils.parseaddr(msg["From"])[1],
           'subject': msg["Subject"],
           'references': msg["References"],
@@ -145,9 +151,10 @@ class Connection:
 
 def test_message():
   con = Connection(
-    MYADDR,
-    USERNAME,
-    getpass("Password for {}".format(USERNAME))
+    config.NAME,
+    config.MYADDR,
+    config.USERNAME,
+    getpass("Password for {}".format(config.USERNAME))
   )
   con.connect_smtp()
   tolist = [ "pmawhorter@gmail.com" ]
