@@ -76,7 +76,7 @@ def init_db():
     """
     CREATE TABLE IF NOT EXISTS courses(
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      school TEXT NOT NULL,
+      institution TEXT NOT NULL,
       name TEXT NOT NULL,
       term TEXT NOT NULL,
       year INTEGER NOT NULL,
@@ -104,16 +104,28 @@ def init_db():
   )
   cur.execute(
     """
+    CREATE TABLE IF NOT EXISTS requests(
+      user TEXT NOT NULL,
+      type TEXT NOT NULL,
+      value TEXT NOT NULL,
+      status TEXT NOT NULL
+    );
+    """
+  )
+  cur.execute(
+    """
     CREATE TABLE IF NOT EXISTS assignments(
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       course_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
       type TEXT NOT NULL,
       questions TEXT NOT NULL,
       answers TEXT NOT NULL,
       points TEXT NOT NULL,
       value REAL NOT NULL,
-      due REAL NOT NULL,
-      really_due REAL,
+      publish_at REAL NOT NULL,
+      due_at REAL NOT NULL,
+      really_due_at REAL,
       reject_after REAL
     );
     """
@@ -282,7 +294,7 @@ def get_course_id(user, id_or_tag_or_alias, id_cache = {}):
     cur = DBCON.cursor()
     if len(spl) == 4:
       cur.execute(
-        "SELECT id FROM courses WHERE school = ? AND name = ? AND term = ? AND year = ?;",
+        "SELECT id FROM courses WHERE institution = ? AND name = ? AND term = ? AND year = ?;",
         spl
       )
       return unique_result_single(cur.fetchall())
@@ -298,7 +310,7 @@ def course_tag(course_id, tag_cache = {}):
     return tag_cache[course_id]
   cur = DBCON.cursor()
   cur.execute(
-    "SELECT school, name, term, year FROM courses WHERE id = ?;",
+    "SELECT institution, name, term, year FROM courses WHERE id = ?;",
     (course_id,)
   )
   result = "/".join(unique_result(cur.fetchall()))
@@ -419,6 +431,217 @@ def enrollment_status(user, course_id):
   )
   return result or "none"
 
+######################
+# Request functions: #
+######################
+
+def process_request(user, typ, value):
+  cur = DBCON.cursor()
+  if typ == "role":
+    cur.execute(
+      "SELECT addr FROM users WHERE addr = ?;",
+      (user,)
+    )
+    if len(cur.fetchall()) == 0:
+      return (False, "User '{}' is not registered.\n".format(user))
+    cur.execute(
+      "UPDATE users SET role = ? WHERE addr = ?;",
+      (value, user)
+    )
+    DBCON.commit()
+    return (True, "Set role to {} for user '{}'.\n".format(value, user))
+  else:
+    return (False, "Unknown permission type {}.\n".format(typ))
+
+
+def outstanding_requests(user=None):
+  cur = DBCON.cursor()
+  if user:
+    cur.execute("SELECT typ, value, status FROM requests;", (,))
+  else:
+    cur.execute(
+      "SELECT typ, value, status FROM requests WHERE user = ?;",
+      (user,)
+    )
+  return cur.fetchall()
+
+def submit_request(user, typ, value):
+  cur = DBCON.cursor()
+  cur.execute(
+    "SELECT status FROM requests WHERE user = ? AND type = ? AND value = ?;",
+    (user, typ, value)
+  )
+  rows = cur.fetchall()
+  if any(r[0] == "requested" for r in rows):
+    return (
+      False,
+      "Previous request for {}/{} by user '{}' is still outstanding.\n".format(
+        typ, value, user
+      )
+    )
+  if any(r[0] == "granted" for r in rows):
+    success, msg = process_request(user, typ, value)
+    if not success:
+      return (
+        False,
+        "Error processing request {}/{}: {}".format(typ, value, msg)
+      )
+    cur.execute(
+      "DELETE FROM requests WHERE user = ? AND type = ? AND value = ?;",
+      (user, typ, value)
+    )
+    DBCON.commit()
+    return (
+      True,
+      """
+Request {}/{} pre-authorized for user '{}'.
+
+{}
+""".format(typ, value, user, msg)
+    )
+
+  cur.execute(
+    "DELETE FROM requests WHERE user = ? AND type = ? AND value = ?;",
+    (user, typ, value)
+  )
+  cur.execute(
+    "INSERT INTO requests(user, type, value, status) values(?, ?, ?, ?);",
+    (user, typ, value, "requested")
+  )
+  DBCON.commit()
+  return (
+    True,
+    """\
+Request {typ}/{value} submitted for user '{user}'.
+
+A user with appropriate role/permissions must use:
+
+:grant {user} {typ} {value}
+
+to approve this request.
+""".format(typ=typ, value=value, user=user)
+
+def grant_request(user, typ, value):
+  cur = DBCON.cursor()
+  cur.execute(
+    "SELECT status FROM requests WHERE user = ? AND type = ? AND value = ?;"
+    (user, typ, value)
+  )
+  rows = cur.fetchall()
+
+  if any(r[0] == "requested" for r in rows):
+    success, msg = process_request(user, typ, value)
+    if not success:
+      return (
+        False,
+        "Error processing request {}/{}: {}".format(typ, value, msg)
+      )
+    cur.execute(
+      "DELETE FROM requests WHERE user = ? AND type = ? AND value = ?;",
+      (user, typ, value)
+    )
+    DBCON.commit()
+    return (
+      True,
+      """
+Granted requested permission {}/{} for user '{}'.
+
+{}
+""".format(typ, value, user, msg)
+    )
+
+  if any(r[0] == "granted" for r in rows):
+    return (
+      False,
+      "Previous permission {}/{} for user '{}' has not been used.\n".format(
+        typ, value, user
+      )
+    )
+
+  cur.execute(
+    "DELETE FROM requests WHERE user = ? AND type = ? AND value = ?;",
+    (user, typ, value)
+  )
+  cur.execute(
+    "INSERT INTO requests(user, type, value, status) values(?, ?, ?, ?);",
+    (user, typ, value, "granted")
+  )
+  DBCON.commit()
+  return (
+    True,
+    """\
+Added permission {typ}/{value} for user '{user}'.
+
+User '{user}' has not yet requested this permission. They can use:
+
+:request {typ} {value}
+
+to do so.
+""".format(typ=typ, value=value, user=user)
+  )
+
+################################
+# Course management functions: #
+################################
+
+def create_course(user, institution, name, term, year):
+  cur = DBCON.cursor()
+  cur.execute(
+    "SELECT id FROM courses WHERE institution = ? AND name = ? AND term = ? AND year = ?;",
+    (institution, name, term, year)
+  )
+  if len(cur.fetchall()) > 0:
+    return (
+      False,
+      "Error: Course {}/{}/{}/{} already exists.\n".format(
+        institution,
+        name,
+        term,
+        year
+      )
+    )
+  token = new_auth()
+  cur.execute(
+    "INSERT INTO courses(institution, name, term, year, auth) values(?, ?, ?, ?, ?);",
+    (institution, name, term, year, token)
+  )
+  cur.execute(
+    "SELECT id FROM courses WHERE institution = ? AND name = ? AND term = ? AND year = ?;",
+    (institution, name, term, year)
+  )
+  course_id = cur.fetchall()[0][0]
+  DBCON.commit()
+  add_instructor(course_id, user)
+  return (
+    True,
+    """\
+Created course {inst}/{name}/{term}/{year} and added user '{user}' as an instructor. The course ID is {id}. For course management, the authentication token is:
+
+{token}
+
+Make sure that you save this token and keep it private; anyone with the token can manage the course. If you need to reset the token, send:
+
+:auth {inst}/{name}/{term}/{year} {token}
+:scramble {inst}/{name}/{term}/{year}
+
+To add students to this course send:
+
+:auth {inst}/{name}/{term}/{year} {token}
+:expect {inst}/{name}/{term}/{year} <list of student emails>
+
+Students can then enroll in the course by sending:
+
+:enroll {inst}/{name}/{term}/{year}
+""".format(
+  inst = institution,
+  name = name,
+  term = term,
+  year = year,
+  token = token,
+  user = user
+)
+  )
+
 def add_instructor(course_id, user):
   enr = enrollment_status(user, course_id)
   if enr == "none":
@@ -529,3 +752,13 @@ def enroll_student(course_id, user):
         course_tag(course_id)
       )
     )
+
+#########################
+# Assignment functions: #
+#########################
+
+
+
+#########################
+# Submission functions: #
+#########################
