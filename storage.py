@@ -118,15 +118,11 @@ def init_db():
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       course_id INTEGER NOT NULL,
       name TEXT NOT NULL,
-      type TEXT NOT NULL,
-      questions TEXT NOT NULL,
-      answers TEXT NOT NULL,
-      points TEXT NOT NULL,
-      value REAL NOT NULL,
       publish_at REAL NOT NULL,
       due_at REAL NOT NULL,
-      really_due_at REAL,
-      reject_after REAL
+      late_after REAL,
+      reject_after REAL,
+      content TEXT NOT NULL
     );
     """
   )
@@ -757,7 +753,8 @@ def enroll_student(course_id, user):
 # Assignment functions: #
 #########################
 
-
+def create_assignment(course_id, assignment):
+  # TODO: HERE
 
 #########################
 # Submission functions: #

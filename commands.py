@@ -3,7 +3,8 @@ commands.py
 academibot commands.
 """
 
-import re
+import collections
+import datetime
 
 import storage
 
@@ -39,7 +40,7 @@ def sort_commands(cmds):
 
 def get_commands(words):
   head, tail = words[0], words[1:]
-  if head[0] == ":" and head[1:] in COMMANDS:
+  if head[0] == ':' and head[1:] in COMMANDS:
     args, rest = get_args(tail)
     return [(head[1:], args)] + get_commands(rest)
   else:
@@ -49,6 +50,10 @@ def get_args(words):
   head, tail = words[0], words[1:]
   if head[0] == ":" and head[1:] in COMMANDS:
     return ([], words)
+  elif head[-1] == '{' and head[:-1] in FORMATS:
+    token, trest = FORMATS[head[:-1]]["parser"](tail)
+    args, rest = get_args(trest)
+    return ([token] + args, rest)
   else:
     args, rest = get_args(tail)
     return ([head] + args, rest)
@@ -162,6 +167,74 @@ def get_course(user, course):
   tag = storage.course_tag(course_id)
   return ("", course_id, tag)
 
+def parse_date(string):
+  date_part, time_part = string.split('T')
+  year, month, dat = date_part.split('-')
+  hour, minute, second = time_part.split(':')
+  try:
+    dt = datetime.datetime(
+      int(year),
+      int(month),
+      int(day),
+      int(hour),
+      int(minute),
+      int(second),
+      tzinfo=None
+    )
+  except ValueError:
+    return None
+  return dt
+
+############
+# Formats: #
+############
+
+def fmt_text(words, sofar=None):
+  sofar = sofar or []
+  head, tail = words[0], words[1:]
+  if head == "}":
+    return ' '.join(sofar), tail
+  else:
+    sofar.append(head)
+    return fmt_text(tail, sofar)
+
+def fmt_list(words, sofar=None):
+  sofar = sofar or []
+  head, tail = words[0], words[1:]
+  if head[-1] == '{' and head[:-1] in FORMATS:
+    token, trest = FORMATS[head[:-1]]["parser"](tail)
+    sofar.append(token)
+    return fmt_list(trest, sofar)
+  elif head == "}":
+    return sofar, tail
+  else:
+    sofar.append(head)
+    return fmt_list(tail, sofar)
+
+def fmt_map(words, key=None, sofar=None):
+  sofar = sofar or collections.OrderedDict()
+  head, tail = words[0], words[1:]
+  if head[-1] == '{' and head[:-1] in FORMATS:
+    token, trest = FORMATS[head[:-1]]["parser"](tail)
+    if key:
+      sofar[key] = token
+      return fmt_map(trest, key=None, sofar=sofar)
+    else:
+      return fmt_map(trest, key=token, sofar=sofar)
+  elif head == ":":
+    if key:
+      return fmt_map(tail, key=key, sofar=sofar)
+    else:
+      return fmt_map(tail, key=":", sofar=sofar)
+  elif head == "}":
+    return sofar, tail
+  else:
+    if key:
+      sofar[key] = head
+      return fmt_map(tail, key=None, sofar)
+    else:
+      return fmt_map(tail, key=head, sofar)
+
 #############
 # Commands: #
 #############
@@ -173,6 +246,14 @@ To interact with academibot, send it an email containing one or more commands (e
 Academibot recognizes the following commands:
 
   {commandlist}
+
+Additionally, you can get help with these parsing formats:
+
+  {formatlist}
+
+Finally, there are some other general help topics:
+
+  {topiclist}
 """.format(
   commandlist = "\n".join(
     "  :{cmd}{ad} -- {d}".format(
@@ -180,18 +261,34 @@ Academibot recognizes the following commands:
       ad = " " + c["argdesc"] if c["argdesc"] else "",
       d = c["desc"]
     ) for c in sorted(COMMANDS.values(), key=labda c: c["name"])
-  )
+  ),
+  formatlist = "\n".join(
+    "  {fmt}{{ -- {d}".format(
+      fmt = f["name"],
+      d = f["desc"]
+    ) for f in sorted(FORMATS.values(), key=labda f: f["name"])
+  ),
+  topiclist = "\n".join(
+    "  {topic} -- {d}".format(
+      topic = t["name"],
+      d = t["desc"]
+    ) for t in sorted(TOPICS.values(), key=labda t: t["name"])
+  ),
 )
   body = ""
   if len(args) == 0:
     body = general
   else:
-    cmd = args[0]
-    if cmd in COMMANDS:
-      body = COMMANDS[cmd]["help"]
+    topic = args[0]
+    if topic in COMMANDS:
+      body = COMMANDS[topic]["help"]
+    elif topic in FORMATS:
+      body = FORMATS[topic]["help"]
+    elif topic in TOPICS:
+      body = TOPICS[topic]["help"]
     else:
       body = """\
-Unknown command '{bad}'.
+Unknown topic '{bad}'.
 
 Full command was understood as:
 
@@ -401,7 +498,7 @@ def cmd_enroll(context, *args):
   if err:
     return err
 
-  delegate(storage.enroll_student(course_id, user))
+  return delegate(storage.enroll_student(course_id, user))
 
 def cmd_request(context, *args):
   user = context["user"]
@@ -411,7 +508,7 @@ def cmd_request(context, *args):
   typ = args[0]
   value = args[1]
 
-  delegate(storage.submit_request(user, typ, value))
+  return delegate(storage.submit_request(user, typ, value))
 
 def cmd_grant(context, *args):
   user = context["user"]
@@ -440,7 +537,7 @@ Error: only admins may grant requests. To request admin privileges send:
   typ = args[1]
   value = args[2]
 
-  delegate(storage.grant_request(target, typ, value))
+  return delegate(storage.grant_request(target, typ, value))
 
 def cmd_create_course(context, *args):
   user = context["user"]
@@ -470,7 +567,7 @@ Error: to create a course you must be an instructor. To request instructor statu
 An admin will need to approve your request.
 """
 
-  delegate(storage.create_course(*args[:4]))
+  return delegate(storage.create_course(*args[:4]))
 
 def cmd_add_instructor(context, *args):
   user = context["user"]
@@ -491,20 +588,16 @@ def cmd_add_instructor(context, *args):
   if err:
     return err
 
-  delegate(storage.add_instructor(course_id, instructor))
+  return delegate(storage.add_instructor(course_id, instructor))
 
 def cmd_create_assignment(context, *args):
   user = context["user"]
-  (
-    err,
-    (course, name, typ, value, publish, due, really_due, reject_after, _)
-  ) = unpack_args(
+  ( err, (course, assignment) ) = unpack_args(
     "create_assignment",
     args,
-    9,
-    "a course, an assignment name, an assignment type, a value, a publish date/time, a due date/time, a strict due date/time, a final submission date/time, and one or more problems"
+    2,
+    "a course and an assignment"
   )
-  problem_content = args[8:]
 
   err, course_id, tag = get_course(course)
   if err:
@@ -514,7 +607,82 @@ def cmd_create_assignment(context, *args):
   if err:
     return err
 
-  # TODO: HERE
+  return delegate(storage.create_assignment(course_id, assignment))
+
+FORMATS = {
+  "text": {
+    "name": "text",
+    "parser": fmt_text,
+    "desc": "Combines words into a single chunk of text."
+    "help": """\
+Help for format:
+  text{
+
+Usage examples:
+  text{ This is some text that will be treated as a single token. }
+
+  map{
+    name : text{ A problem name with multiple words. }
+    ...
+  }
+
+  text{ map{ these : tokens wont : be parsed : as a : map } }
+
+The 'text{' format combines all tokens until the matching '}' into a single chunk of text, which is then treated as a single token. A single space is included between each sub-token, no matter how much whitespace separates them in the original text. Unlike other formats, the text{ format doesn't allow nested formats within it.
+"""
+  },
+  "map": {
+    "name": "map",
+    "parser": fmt_map,
+    "desc": "Lists a set of key <-> value relations."
+    "help": """\
+Help for format:
+  map{
+
+Usage examples:
+  map{
+    1 : text{ Value 1 }
+    4 : value2
+    three : text{ Names don't have to be numbers. }
+    2 : text { Ordering is preserved regardless of names. }
+    text{ A multi-word key } : text{ Keys must be single tokens. }
+  }
+
+  map{
+    name : text{ Problem 1 }
+    type : multiple-choice
+    prompt : text{ What is your favorite color? }
+    answers : map{
+      1 : Blue
+      2 : Green
+      3 : Grue
+      4 : text { I don't have a favorite color. }
+    }
+    solution : 3
+  }
+
+The 'map{' format specifies a list of key <-> value relations, where each key and value is a single token, and they are separated from each other by a ':' token (the ':' must be surrounded by spaces).
+
+The 'map{' format is used for a couple of important purposes, including defining problems and their answers. See ':help problem"
+"""
+  },
+  "list": {
+    "name": "list",
+    "parser": fmt_list,
+    "desc": "Combines tokens into a list."
+    "help": """\
+Help for format:
+  list{
+
+Usage examples:
+  list{ 1 2 3 4 5 }
+
+  list{ flag-1 flag-2 other-flag }
+
+The 'list{' format combines each of its sub-tokens into a single token which just contains a list of them. To treat multiple tokens as a single piece of text, use the 'text{' format instead.
+"""
+  },
+}
 
 COMMANDS = {
   "help": {
@@ -758,7 +926,7 @@ Adds the given user as an instructor for the given course. Course-level authenti
     "name": "create_assignment",
     "run" : cmd_create_assignment,
     "priority": 10,
-    "argdesc": "<course> <name> <type> <value> <publish_at> <due_at> <really_due_at> <reject_after> <problem1> ...",
+    "argdesc": "<course> <assignment>",
     "desc": "(requires auth) Creates a new assignment for the given course.",
     "help": """\
 Help for command:
@@ -768,130 +936,228 @@ Usage examples:
   :auth example-college/test-course/spring/2150 846fc9b98ac4b5a859d5ded801154ce6
   :create_assignment
     example-college/test-course/spring/2150
-  > the name of the new assignment:
-    quiz-1
-  > assignment type:
-    quiz
-  > assignment value (relative to all other assignments)
-    1.0
+    map{
+      name : quiz-1
+      type : quiz
+      value : 1.0
+      flags : list{ shuffle-problems }
   > This assignment will be published on January 25th at midnight (the beginning of the day, i.e., right after the end of January 24th):
-    2150-1-25T00:00:00
+      publish : 2150-1-25T00:00:00
   > It's due by the end of January 30th:
-    2150-1-30T23:59:59
+      due : 2150-1-30T23:59:59
   > But submissions won't really be marked as late until 4:00 a.m. on January 31st:
-    2150-1-31T04:00:00
+      really-due : 2150-1-31T04:00:00
   > Even late submissions won't be accepted after February 7th:
-    2150-2-8T00:00:00
-  > The rest of the arguments (everything up until the next command) define individual problems. Be careful not to include a valid command (a word starting with a ':') in any of the problem definitions. The problems are parsed as a series of 'problem{' blocks (see ':help problem{').
-    problem{
-      Name: 1
-      Type: multiple-choice
-      Flags: list{ randomize-order }
-      Prompt: text{
-        If two trains leave New York and Boston travelling towards each other, one going 30 km/h and the other travelling at 70 km/h, which train will reach the other first? }
-      Answers: answers{
-        ny: text{ The New York train. }
-        bos: text{ The Boston train. }
-        same: text{ They will reach each other at the same time. }
-        sense: text{ This question doesn't make sense. }
+      reject-after : 2150-2-8T00:00:00
+  > The 'problems' value defines individual problems. Be careful not to include a valid command (a word starting with a ':') in any of the problem definitions. The problems are parsed as a 'list{' of 'map{' blocks (see ':help list' and ':help map').
+      problems : list{
+        map{
+          name : 1
+          type : multiple-choice
+          flags : list{ randomize-order }
+          prompt : text{
+            If two trains leave New York and Boston travelling towards each other, one going 30 km/h and the other travelling at 70 km/h, which train will reach the other first? }
+          answers : map{
+            ny : text{ The New York train. }
+            bos : text{ The Boston train. }
+            same : text{ They will reach each other at the same time. }
+            sense : text{ This question doesn't make sense. }
+          }
+          solution : same
+        }
+        map{
+          name : text{ Problem 2 }
+          type : multiple-choice
+          prompt : text{ This is problem 2. Good luck. }
+          answers : map{
+            1 : text { Um... }
+            2 : text { what? }
+            3 : text { This is not a good question. }
+          }
+          solution : 3
+        }
       }
-      Solution: same
-    }
-    problem{
-      Name: text{ Problem 2 }
-      Type: multiple-choice
-      Prompt: text{ This is problem 2. Good luck. }
-      Answers: answers{
-        1: text { Um... }
-        2: text { what? }
-        3: text { This is not a good question. }
-      }
-      Solution: 3
     }
 
 
-':create_assignment' creates a new assignment in the given course. It requires at least eight arguments:
-    "argdesc": "<course> <name> <type> <value> <publish_at> <due_at> <really_due_at> <reject_after> <problem1> ...",
-  1. The course to add the assignment to.
-  2. The assignment name. Must be unique within a course.
-  3. The assignment type. See ':help assignment-types'.
-  4. The value of the assignment. Course grades are computed by summing the value of each assignment multiplied by the percentage score on that assignment, and are reported out of the total value of all assignments for a course.
-  5. The date/time at which to publish the assignment. Times are given as YYYY-MM-DDTHH:MM:SS (see ':help time'). Before this time it won't be available to students.
-  6. The date/time that the assignment is due as displayed to students.
-  7. The actual date/time after which submissions will be marked as late. It's often a good idea to set this time several hours after the display deadline so that you don't have to field complaints and excuses about last-minute submissions.
-  8. The date/time after which even late submissions won't be rejected. It's a good idea to be liberal with this, because making exceptions to this deadline is a pain. You can set up your late policy for a given assignment type to include a 0-credit deadline before the hard no-submissions deadline.
-  9-... Further arguments are parsed as problems for the assignment.
+':create_assignment' creates a new assignment in the given course. It requires two arguments: a course ID, tag, or alias, and an assignment map. For the details of the format of the assignment map, see ':help assignment'. ':help problem' gives details on the format of individual problems.
 
-Arguments past the 8th are parsed collectively as a sequence of problem definitions. ':help problem{' gives more information about how this format. Note that any valid academibot command will cut off the arguments of ':create_assignment', so commands cannot be included in problem definitions.
+Note that
 """
   },
 }
 
-# TODO: Implement these!
-FORMATS = {
+TOPICS = {
+  "assignment": {
+    "name": "assignment",
+    "desc": "The format for specifying an assignment.",
+    "help": """\
+Help for topic:
+  assignment
+
+Usage examples:
+    map{
+      name : quiz-1
+      type : quiz
+      value : 1.0
+      flags : list{ shuffle-problems }
+      publish : 2150-1-25T00:00:00
+      due : 2150-1-30T23:59:59
+      late-after : 2150-1-31T04:00:00
+      reject-after : 2150-2-8T00:00:00
+      problems : list{
+        ...
+      }
+    }
+
+    The create_assignment command requires an assignment map as an argument. The meaning of assignment keys is as follows:
+
+  'name'
+    Specifies the name of the assignment. This must be unique within a course, and is used by students when submitting the assignment, so it should be short and simple.
+
+  'type'
+    The assignment type. See ':help assignment-types' for details.
+
+  'value'
+    The value of the assignment. Course grades are computed by summing the value of each assignment multiplied by the percentage score on that assignment, and are reported out of the total value of all assignments for a course.
+
+  'flags'
+    This key is optional, and specifies special properties of the assignment. The following flags are recognized:
+      'shuffle-problems' -- The problems will be presented in a different order for each student.
+
+  'publish'
+    The date/time at which to publish the assignment. Times are given as YYYY-MM-DDTHH:MM:SS (see ':help time'). Before this time it won't be available to students.
+
+  'due'
+    The public date/time that the assignment is due as displayed to students.
+
+  'late-after'
+    The actual date/time after which submissions will be marked as late. It's often a good idea to set this time several hours after the display deadline so that you don't have to field complaints and excuses about last-minute submissions.
+
+  'reject-after'
+    The date/time after which even late submissions won't be accepted. It's a good idea to be liberal with this, because making exceptions to this deadline is a pain (the bot won't accept or keep track of assignments past the reject-after time). You can set up your late policy for a given assignment type to include a 0-credit deadline before this hard reject-after deadline.
+
+  'problems'
+    The value for this key must be a list of 'problem' maps (see ':help list', ':help map', and ':help problem').
+
+Note that any valid command will cut off the arguments of ':create_assignment', so commands cannot be included anywhere in assignment or problem definitions.
+"""
+  },
   "problem": {
     "name": "problem",
-    "desc": "Specifies a problem as part of an assignment."
+    "desc": "The format for specifying a problem within an assignment.",
     "help": """\
-Help for format:
-  text{
+Help for topic:
+  problem
 
 Usage examples:
-  problem{
-    Name: text{ Problem 1 }
-    Type: multiple-choice
-    Prompt: text{ What is your favorite color? }
-    Answers: answers{
-      1: Blue
-      2: Green
-      3: Grue
-      4: text { I don't have a favorite color. }
+  map{
+    name : text{ Problem 1 }
+    type : multiple-choice
+    flags : list{ number-answers shuffle-answers }
+    prompt : text{ What is your favorite color? }
+    answers : map{
+      1 : Blue
+      2 : Green
+      3 : Grue
+      4 : text { I don't have a favorite color. }
     }
-    Solution: 3
+    solution : 3
   }
 
-The 'problem{' format... TODO: HERE
+The  'assignment' map format (see ':help assignment') includes a list of problems. Each problem is defined using a 'map{' block (see ':help map') that must include the following keys/values:
 
-See also:
-  :help answers{
-  :help text{
+  'name'
+    This key should have a 'text{' or single-word value that defines the name of the problem. Single-word values are preferable because students need to use this name as part of their assignment submissions.
+
+  'type'
+    This key defines the problem type. See ':help problem-types' for a list of recognized problem types.
+
+  'flags'
+    This key is optional, and defines special properties of the problem. The following flags are recognized:
+      'number-answers' -- Use numbers instead of the given answer keys when presenting the answers.
+      'shuffle-answers' -- When presenting the problem, the order of the answers will be different for each student.
+
+  'prompt'
+    This key should have a 'text{' value that describes the problem and asks a question. This content will be shown before the list of answers.
+
+  'answers'
+    The value of the 'type' key dictates what the 'answer' key should hold. See ':help problem-types'.
+
+  'solution'
+    The meaning of this field is also controlled by the 'type' value, but it generally indicates which answer is correct.
 """
-  }
-  "answer": {
-    "name": "answer",
-    "desc": "Lists a set of answers to a problem."
+  },
+  "assignment-types": {
+    "name": "assignment-types",
+    "desc": "The valid assignment types and how they work.",
     "help": """\
-Help for format:
-  answers{
+Help for topic:
+  assignment-types
 
 Usage examples:
-  answers{
-    1: text{ Answer 1 }
-    4: answer2
-    three: text{ Names don't have to be numbers. }
-    single-word: text{ But they must be single words. }
-    2: text { Answer ordering is preserved regardless of names. }
-  }
+  :create_assignment
+    example-college/test-course/spring/2150
+    quiz-1
+    quiz
+    ...
 
-The 'answer{' format specifies a list of answers, each of which is indexed by a single word. TODO: HERE
+The type argument to the ':create_assignment' command (see ':help create_assignment') specifies how the assignment is presented and managed. Valid types are:
+
+  'quiz'
+    A 'quiz' assignment just has a list of problems.
 """
-  }
-  "text": {
-    "name": "text",
-    "desc": "Combines words into a single chunk of text."
+  },
+  "problem-types": {
+    "name": "problem-types",
+    "desc": "The valid problem types and how they work.",
     "help": """\
-Help for format:
-  text{
+Help for topic:
+  problem-types
 
 Usage examples:
-  text{ This is some text that will be treated as a single token. }
-
-  problem{
-    Name: text{ A problem name with multiple words. }
+  map{
+    ...
+    type : multiple-choice
     ...
   }
 
-The 'text{' format combines all tokens until the matching '}' into a single chunk of text, which is then treated as a single token.
+The 'type' field of the 'problem' format specifies how the 'answers' and 'solution' fields are interpreted (see ':help problem'). Valid problem types are:
+
+  'multiple-choice'
+    A 'multiple-choice' type problem uses a 'map{' for its 'answers' value, where each value represents an exclusive choice, and there is a single correct answer. Accordingly, it's 'solution' value should be a single token which matches one of the keys of the 'answers' map and specifies which value is correct.
 """
-  }
+  },
+  "time": {
+    "name": "time",
+    "desc": "The format for specifying time values.",
+    "help": """\
+Help for topic:
+  time
+
+Usage examples:
+  1970-1-1T00:00:00
+
+  2016-08-30T18:00:00
+
+  2042-12-30T23:59:59
+
+  476-1-1T3:5:0
+
+When a time value needs to be specified, such as the due date for an assignment, it takes the format: YYYY-MM-DDTHH:MM:SS, where the 'T' is a literal 'T' character but the rest of the letters stand for the year, month, day, hour, minute, and second of the specified time. Where a value would begin with a 0 it may omit the 0, although this is only recommended for month and day values.
+
+Note that times are *always* understood in UTC, so you will have to figure out how your timezone and potentially daylight savings time differs from UTC. For example, a time given as:
+
+  2016-8-30T18:00:00
+
+would be eqivalent to 11:00 a.m. in Pacific Daylight Time, whereas
+
+  2016-11-30T18:00:00
+
+is still 11:00 a.m. PDT, but is also 10:00 a.m. Pacific Standard Time (which would be wall-clock time on the west coast of North America in November as opposed to August).
+
+Allowing courses to specify a timezone (and daylight savings rules) is a feature in development.
+"""
+    # TODO: Get timzeone stuff working.
+  },
 }
