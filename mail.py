@@ -9,6 +9,7 @@ import mimetypes
 import getpass
 
 import config
+import channel
 
 """
 mail.py
@@ -180,7 +181,7 @@ class AsyncEmailChannel(channel.Channel):
       (
         m["from"], # TODO: Better sender authentication!
         m["body"],
-        self.respond_function(m)
+        self.respond_function_for(m)
       )
       for m in messages
     ]
