@@ -5,22 +5,19 @@ Email bot for managing classes, including assignment submission, gradebook
 management, and automatic grading.
 """
 
-import async
+import mail
 import storage
 import commands
 import config
 
-import getpass
 import time
 
 CON = None
 SEND_QUEUE = []
 
-def process(message):
-  body = message["body"]
-  user = message["from"] # TODO: better here!
+def process(sender, body, reply_function, now):
   cmds = commands.parse(body)
-  if storage.status(user) == "blocking":
+  if storage.status(sender) == "blocking":
     unblock = False
     for (c, args) in cmds:
       if c["name"] == "unblock":
@@ -28,78 +25,64 @@ def process(message):
     if not unblock:
       return
   if cmds:
-    response = commands.handle_commands(user, message, cmds)
-    send_reply(message, response)
+    response = commands.handle_commands(sender, message, cmds, now)
+    reply_function(response)
 
-def send_reply(message, response):
-  reply = {
-    "to": [message["from"]],
-    "subject": "Re: " + message["subject"],
-    "body": response,
-    "references": "{}{}".format(
-      message["references"] + " " if message["references"] else "",
-      message["mid"],
-    ),
-  }
-  SEND_QUEUE.append(reply)
-
-def flush_send_queue():
-  global CON, SEND_QUEUE
-  if len(SEND_QUEUE) == 0:
-    return
-
-  if not CON:
-    CON = async.Connection(
-      config.MYADDR,
-      config.USERNAME,
-      config.PASSWORD
-    )
-
-  CON.prepare_send()
-  while len(SEND_QUEUE) > 0:
-    CON.send_message(**SEND_QUEUE.pop())
-  CON.done_sending()
-
-def main():
-  print("Starting academibot for:")
-  print(config.MYADDR)
-  config.PASSWORD = getpass.getpass(
-    "Enter password for user '{}':".format(config.USERNAME)
-  )
+def run_server(channels):
+  print("Starting academibot with channels:")
+  for c in channels:
+    print("  ..." + str(c) + "...")
   print("...setting up storage...")
   storage.setup()
+  print("...setting up channels...")
+  for c in channels:
+    c.setup()
   print("...done...")
   try:
-    CON = async.Connection(
-      config.MYADDR,
-      config.USERNAME,
-      config.PASSWORD
-    )
+    now = 0
+    last = 0
     while True:
+      last = now
+      now = storage.now_ts()
       try:
         print("...cleaning auth tokens...")
         storage.clean_tokens()
-        print("...checking mail...")
-        CON.prepare_receive()
-        messages = CON.check_mail()
-        CON.done_receiving()
+        print("...auto-grading...")
+        storage.maintain_grade_info(last, now)
+        print("...checking channels...")
+        messages = []
+        for c in channels:
+          messages.extend(c.poll())
         print("...processing {} messages...".format(len(messages)))
-        for m in messages:
-          process(m)
-        print("...sending {} responses...".format(len(SEND_QUEUE)))
-        flush_send_queue()
+        for sender, body, rf in messages:
+          try:
+            process(sender, body, rf, now)
+          except Exception as e:
+            print(e)
+            print("...error processing message; ignoring...")
+        print("...flushing channels...")
+        for c in channels:
+          c.flush()
         print("...done; sleeping for {} seconds...".format(config.INTERVAL))
         time.sleep(config.INTERVAL)
-      except async.ConnectionError as e:
+      except Exception as e:
+        if type(e) == KeyboardInterrupt:
+          raise e
         print(e)
         print(
-          "Connection error. Retrying next interval ({} seconds).".format(
+          "Processing error. Retrying next interval ({} seconds).".format(
             str(config.INTERVAL)
           )
         )
+        time.sleep(config.INTERVAL)
   except KeyboardInterrupt:
     pass
   print("Exiting academibot (incoming email will be ignored).")
+
+def main():
+  run_server(
+    [mail.AsyncEmailChannel(config.MYADDR, config.USERNAME)]
+  )
 
 if __name__ == "__main__":
   main()

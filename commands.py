@@ -3,10 +3,8 @@ commands.py
 academibot commands.
 """
 
-import collections
-import datetime
-
 import storage
+import formats
 
 def parse(body):
   body = body.replace('\r', '')
@@ -42,6 +40,7 @@ def get_commands(words):
   head, tail = words[0], words[1:]
   if head[0] == ':' and head[1:] in COMMANDS:
     args, rest = get_args(tail)
+    args = formats.parse(args)
     return [(head[1:], args)] + get_commands(rest)
   else:
     return get_commands(tail)
@@ -50,25 +49,22 @@ def get_args(words):
   head, tail = words[0], words[1:]
   if head[0] == ":" and head[1:] in COMMANDS:
     return ([], words)
-  elif head[-1] == '{' and head[:-1] in FORMATS:
-    token, trest = FORMATS[head[:-1]]["parser"](tail)
-    args, rest = get_args(trest)
-    return ([token] + args, rest)
   else:
     args, rest = get_args(tail)
     return ([head] + args, rest)
 
-def handle_commands(user, message, cmdlist):
+def handle_commands(user, message, cmdlist, now):
   responses = []
   context = {
     "user": user,
     "message": message,
+    "now": now,
     "auth":
     {
       "users": [],
       "courses": [],
       "tokens": [],
-    }
+    },
   }
   for (cmd, args) in cmdlist:
     result = COMMANDS[cmd]["run"](context, *args)
@@ -167,73 +163,17 @@ def get_course(user, course):
   tag = storage.course_tag(course_id)
   return ("", course_id, tag)
 
-def parse_date(string):
-  date_part, time_part = string.split('T')
-  year, month, dat = date_part.split('-')
-  hour, minute, second = time_part.split(':')
-  try:
-    dt = datetime.datetime(
-      int(year),
-      int(month),
-      int(day),
-      int(hour),
-      int(minute),
-      int(second),
-      tzinfo=None
+def get_assignment(course_id, name):
+  aid = storage.get_assignment_id(course_id, name)
+  if not aid:
+    return (
+      "Error: No assignment '{}' found in course {}.".format(
+        name,
+        storage.course_tag(course_id)
+      ),
+      None
     )
-  except ValueError:
-    return None
-  return dt
-
-############
-# Formats: #
-############
-
-def fmt_text(words, sofar=None):
-  sofar = sofar or []
-  head, tail = words[0], words[1:]
-  if head == "}":
-    return ' '.join(sofar), tail
-  else:
-    sofar.append(head)
-    return fmt_text(tail, sofar)
-
-def fmt_list(words, sofar=None):
-  sofar = sofar or []
-  head, tail = words[0], words[1:]
-  if head[-1] == '{' and head[:-1] in FORMATS:
-    token, trest = FORMATS[head[:-1]]["parser"](tail)
-    sofar.append(token)
-    return fmt_list(trest, sofar)
-  elif head == "}":
-    return sofar, tail
-  else:
-    sofar.append(head)
-    return fmt_list(tail, sofar)
-
-def fmt_map(words, key=None, sofar=None):
-  sofar = sofar or collections.OrderedDict()
-  head, tail = words[0], words[1:]
-  if head[-1] == '{' and head[:-1] in FORMATS:
-    token, trest = FORMATS[head[:-1]]["parser"](tail)
-    if key:
-      sofar[key] = token
-      return fmt_map(trest, key=None, sofar=sofar)
-    else:
-      return fmt_map(trest, key=token, sofar=sofar)
-  elif head == ":":
-    if key:
-      return fmt_map(tail, key=key, sofar=sofar)
-    else:
-      return fmt_map(tail, key=":", sofar=sofar)
-  elif head == "}":
-    return sofar, tail
-  else:
-    if key:
-      sofar[key] = head
-      return fmt_map(tail, key=None, sofar)
-    else:
-      return fmt_map(tail, key=head, sofar)
+  return ("", aid)
 
 #############
 # Commands: #
@@ -266,7 +206,7 @@ Finally, there are some other general help topics:
     "  {fmt}{{ -- {d}".format(
       fmt = f["name"],
       d = f["desc"]
-    ) for f in sorted(FORMATS.values(), key=labda f: f["name"])
+    ) for f in sorted(formats.FORMATS.values(), key=labda f: f["name"])
   ),
   topiclist = "\n".join(
     "  {topic} -- {d}".format(
@@ -282,8 +222,8 @@ Finally, there are some other general help topics:
     topic = args[0]
     if topic in COMMANDS:
       body = COMMANDS[topic]["help"]
-    elif topic in FORMATS:
-      body = FORMATS[topic]["help"]
+    elif topic in formats.FORMATS:
+      body = formats.FORMATS[topic]["help"]
     elif topic in TOPICS:
       body = TOPICS[topic]["help"]
     else:
@@ -307,7 +247,7 @@ def cmd_auth(context, *args):
   if err:
     return err
   if purpose[0] == "#":
-    if storage.auth_token(user, purpose, token):
+    if storage.auth_token(context["now"], user, purpose, token):
       context["auth"]["tokens"].append(purpose[1:])
       return "Authentication {} successful.\n".format(purpose)
     else:
@@ -392,7 +332,12 @@ You will have to use this token to prove your identity for some commands by send
 :auth {user} {token}
 """.format(user=user, token=token)
   else:
-    token = create_token(user, "register", duration=config.TEMP_AUTH_INTERVAL)
+    token = create_token(
+      user,
+      "register",
+      context["now"],
+      duration=config.TEMP_AUTH_INTERVAL
+    )
     return """\
 Registration request acknowledged. Your temporary authentication token is {token} which is good for {duration} minutes. Please reply with the following commands to register:
 
@@ -542,7 +487,7 @@ Error: only admins may grant requests. To request admin privileges send:
 def cmd_create_course(context, *args):
   user = context["user"]
   err, (institution, name, term, year) = unpack_args(
-    "create_course"
+    "create-course"
     args,
     4,
     "four arguments (institution, course name, term, and year)"
@@ -572,7 +517,7 @@ An admin will need to approve your request.
 def cmd_add_instructor(context, *args):
   user = context["user"]
   err, (instructor, course) = unpack_args(
-    "add_instructor",
+    "add-instructor",
     args,
     2,
     "a user and a course"
@@ -593,7 +538,7 @@ def cmd_add_instructor(context, *args):
 def cmd_create_assignment(context, *args):
   user = context["user"]
   ( err, (course, assignment) ) = unpack_args(
-    "create_assignment",
+    "create-assignment",
     args,
     2,
     "a course and an assignment"
@@ -609,80 +554,483 @@ def cmd_create_assignment(context, *args):
 
   return delegate(storage.create_assignment(course_id, assignment))
 
-FORMATS = {
-  "text": {
-    "name": "text",
-    "parser": fmt_text,
-    "desc": "Combines words into a single chunk of text."
-    "help": """\
-Help for format:
-  text{
+def assignment_summary(context, course_id, status, aid):
+  user = context["user"]
 
-Usage examples:
-  text{ This is some text that will be treated as a single token. }
+  show_stats = False
+  if status == "instructor":
+    err = check_course_auth(context, course_id, "view submission stats for")
+    if not err:
+      show_stats = True
 
-  map{
-    name : text{ A problem name with multiple words. }
-    ...
-  }
+  row = storage.get_assignment_info(aid)
+  if not row:
+    return "Error: could not find assignment #{}.".format(aid)
+  name, publish, due, late, reject = row
+  due_time
+  ts = storage.now()
+  timeline = "<unknown>"
+  tinfo = ""
+  if ts <= publish:
+    timeline = "unpublished"
+    tinfo = "will be published: {} UTC".format(
+      formats.date_string(formats.date_for(publish))
+    )
+  elif ts <= late:
+    timeline = "open"
+    tinfo = "due at: {} UTC".format(
+      formats.date_string(formats.date_for(due))
+    )
+  elif ts <= reject:
+    timeline = "past due"
+    tinfo = "closes: {} UTC".format(
+      formats.date_string(formats.date_for(reject))
+    )
+  else:
+    timeline = "closed"
+    tinfo = "closed: {} UTC".format(
+      formats.date_string(formats.date_for(reject))
+    )
 
-  text{ map{ these : tokens wont : be parsed : as a : map } }
+  students = []
+  if show_stats:
+    students = [
+      u for cid, u, st in storage.enrolled_users(course_id)
+        if st != "instructor"
+    ]
 
-The 'text{' format combines all tokens until the matching '}' into a single chunk of text, which is then treated as a single token. A single space is included between each sub-token, no matter how much whitespace separates them in the original text. Unlike other formats, the text{ format doesn't allow nested formats within it.
-"""
-  },
-  "map": {
-    "name": "map",
-    "parser": fmt_map,
-    "desc": "Lists a set of key <-> value relations."
-    "help": """\
-Help for format:
-  map{
+  if show_stats: # instructor info
+    submissions = storage.get_all_submissions_to(aid)
+    last_ot = {}
+    last_late = {}
+    for sub in submissions:
+      sid, suser, stime, content, feedback, grade = sub
+      if stime <= late:
+        if suser not in last_ot or last_ot[suser]["timestamp"] < stime:
+          last_ot[suser] = sub
+      else:
+        if suser not in last_late or last_late[suser]["timestamp"] < stime:
+          last_late[suser] = sub
+    otcount = 0
+    lcount = 0
+    bcount = 0
+    mcount = 0
+    for st in students:
+      if st in last_ot:
+        if st in last_late:
+          bcount += 1
+        else:
+          otcount += 1
+      elif st in last_late:
+        lcount += 1
+      else:
+        mcount += 1
 
-Usage examples:
-  map{
-    1 : text{ Value 1 }
-    4 : value2
-    three : text{ Names don't have to be numbers. }
-    2 : text { Ordering is preserved regardless of names. }
-    text{ A multi-word key } : text{ Keys must be single tokens. }
-  }
+    sinfo = """\
+Submissions summary ({} student{}):
+  on-time: {: 4d}
+     late: {: 4d}
+  revised: {: 4d}
+  missing: {: 4d}\
+""".format(
+  len(students),
+  "s" if len(students) != 1 else "",
+  otcount,
+  lcount,
+  bcount,
+  mcount
+)
 
-  map{
-    name : text{ Problem 1 }
-    type : multiple-choice
-    prompt : text{ What is your favorite color? }
-    answers : map{
-      1 : Blue
-      2 : Green
-      3 : Grue
-      4 : text { I don't have a favorite color. }
-    }
-    solution : 3
-  }
+  else: # normal info
+    submissions = storage.get_submissions_for(user, aid)
+    last_on_time = None
+    last_late = None
+    otcount = 0
+    lcount = 0
+    for sub in submissions:
+      sid, suser, stime, content, feedback, grade = sub
+      if stime <= late:
+        otcount += 1
+        if last_on_time == None or stime > last_on_time["timestamp"]:
+          last_on_time = sub
+      elif stime <= reject:
+        lcount += 1
+        if last_late == None or stime > last_late["timestamp"]:
+          last_late = sub
+    if otcount == 0:
+      otsubs = "no on-time submissions"
+    elif otcount == 1:
+      otsubs = "1 on-time submission"
+    else:
+      otsubs = "{} on-time submissions".format(otcount)
+    lsubs = "no late submissions"
+    if lcount == 0:
+      lsubs = "no late submissions"
+    elif lcount == 1:
+      lsubs = "1 late submission"
+    else:
+      lsubs = "{} late submissions".format(lcount)
+    sub_status = "<unknown>"
+    if last_on_time == None and last_late == None:
+      sub_status = "not submitted"
+    elif last_on_time == None:
+      sub_status = "submitted late at {} UTC".format(
+        formats.date_string(formats.date_for(last_late["timestamp"]))
+      )
+    elif last_late == None:
+      sub_status = "submitted on-time at {} UTC".format(
+        formats.date_string(formats.date_for(last_on_time["timestamp"]))
+      )
+    else:
+      sub_status = "submitted on-time at {} UTC and late at {} UTC".format(
+        formats.date_string(formats.date_for(last_on_time["timestamp"]))
+        formats.date_string(formats.date_for(last_late["timestamp"]))
+      )
+    sinfo = ""
+    if otcount + lcount > 0:
+      if lcount > 0:
+        sinfo = "you have {} and {}".format(otsubs, lsubs)
+      else:
+        sinfo = "you have {}".format(otsubs)
 
-The 'map{' format specifies a list of key <-> value relations, where each key and value is a single token, and they are separated from each other by a ':' token (the ':' must be surrounded by spaces).
+  ginfo = ""
+  if show_stats: # instructor info
+    errors = []
+    grade_values = []
+    submitted_grades = []
+    for st in students:
+      err, (grade, feedback) = storage.grade_for(st, aid, context["now"])
+      if err:
+        errors.append(err)
+      else:
+        grade_values.append(grade)
+        if st in last_ot or st in last_late:
+          submitted_grades.append(grade)
 
-The 'map{' format is used for a couple of important purposes, including defining problems and their answers. See ':help problem"
-"""
-  },
-  "list": {
-    "name": "list",
-    "parser": fmt_list,
-    "desc": "Combines tokens into a list."
-    "help": """\
-Help for format:
-  list{
+    if grade_values:
+      grade_values = sorted(grade_values)
+      mean = avg(grade_values)
+      ngv = len(grade_values)
+      if ngv % 2:
+        median = grade_values[ngv // 2]
+      else
+        median = (grade_values[ngv // 2] + grade_values[(ngv // 2) + 1]) / 2
+    else:
+      mean = "<no grades>"
+      median = "<no grades>"
 
-Usage examples:
-  list{ 1 2 3 4 5 }
+    if submitted_grades:
+      submitted_grades = sorted(submitted_grades)
+      smean = avg(submitted_grades)
+      ngv = len(submitted_grades)
+      if ngv % 2:
+        smedian = submitted_grades[ngv // 2]
+      else
+        smedian = (submitted_grades[ngv // 2] + submitted_grades[(ngv //2)+1])/2
+    else:
+      smean = "<nothing submitted>"
+      smedian = "<nothing submitted>"
 
-  list{ flag-1 flag-2 other-flag }
+    if errors:
+      ginfo += "There were grading errors:\n{}\n".format("\n  ".join(errors))
+    ginfo += """\
+  mean grade: {}
+  median grade: {}
+  mean submitted grade: {}
+  median submitted grade: {}\
+""".format(mean, median, smean, smedian)
 
-The 'list{' format combines each of its sub-tokens into a single token which just contains a list of them. To treat multiple tokens as a single piece of text, use the 'text{' format instead.
-"""
-  },
-}
+  else: # normal info
+    err, (grade, feedback) = storage.grade_for(user, aid, context["now"])
+    if not err:
+      if grade:
+        ginfo = "grade: {}%".format(round(100 * grade, 1))
+      else:
+        ginfo = feedback
+
+  result = "{} [{}]: {}\n".format(
+    name,
+    timeline,
+    sub_status,
+  )
+  if tinfo or sinfo or ginfo:
+    result += "  " + "\n  ".join(
+      info
+        for info in (tinfo, sinfo, ginfo)
+        if info
+    ) + "\n"
+  return result
+
+def assignment_text(context, course_id, status, aid):
+  row = storage.get_assignment_info(aid)
+  if not row:
+    return ("Error: assignment #{} not found.".format(aid), None)
+  name, publish, due, late, reject = row
+  if context["now"] < publish and status != "instructor":
+    return ("Error: assignment #{} not found.".format(aid), None)
+  content, msg = storage.get_assignment_content(aid)
+  if not content:
+    return (msg, None)
+  assignment = formats.parse(content)
+  valid, err = formats.process_assignment(assignment)
+  if not valid:
+    return ("While parsing internal assignment content:\n" + err, None)
+  result = "Assignment '{}':\n".format(assignment["name"])
+  aformat = "map{\n"
+  for p in assignment["problems"]:
+    result += """
+Question '{}':
+  {}
+    {}
+""".format(
+  p["name"],
+  p["prompt"],
+  "\n    ".join(
+    "Answer '{}': {}".format(an, atxt)
+    for an, atxt in sorted(p["answers"].values(), key=lambda x: x[0])
+  )
+)
+    aformat += "  {} : {}\n".format(p["name"], sorted(p["answers"].keys())[0])
+  aformat += "}\n"
+  result += "\nAnswer format:\n" + aformat
+  return result
+
+def cmd_list_assignments(context, *args):
+  user = context["user"]
+  list_all = False
+  courses = []
+  for a in args:
+    if a == "-any":
+      list_all = True
+    else:
+      err, course_id, tag = get_course(args[0])
+      if err:
+        return err
+      status = storage.enrollment_status(user, course_id)
+      courses.append((course_id, tag, status))
+  if courses == []:
+    courses = [
+      (course_id, storage.course_tag(course_id), status)
+        for course_id, user, status in storage.all_enrollments(user)
+        if status != "expected"
+    ]
+  result = "Assignment list:\n"
+  result += "----------------\n"
+  for cid, tag, status in courses:
+    result += "For course {}:\n".format(tag)
+    mode = "current"
+    if status == "instructor":
+      mode = "future"
+    if list_all:
+      mode = "all"
+    assignments = storage.assignments_for(cid, context["now"], mode)
+    for a in assignments:
+      result += " " + assignment_summary(context, cid, status, a)
+    if not assignments:
+      if mode == "current" or mode == "future":
+        result += "<no current assignments>\n"
+      else:
+        result += "<no assignments>\n"
+  if not courses:
+    result += "<no enrolled courses>\n"
+  return result
+
+
+def cmd_assignment_status(context, *args):
+  user = context["user"]
+  ( err, (course, asg) ) = unpack_args(
+    "assignment-status",
+    args,
+    2,
+    "a course and an assignment"
+  )
+  if err:
+    return err
+  err, course_id, tag = get_course(user, course)
+  if err:
+    return err
+  err, aid = get_assignment(course, asg)
+  if err:
+    return err
+  status = storage.enrollment_status(user, course_id)
+  return "Status for assignment '{}' in course {}:\n{}".format(
+    asg,
+    tag,
+    assignment_summary(context, course_id, status, aid)
+  )
+
+def cmd_assignment(context, *args):
+  user = context["user"]
+  ( err, (course, asg) ) = unpack_args(
+    "assignment",
+    args,
+    2,
+    "a course and an assignment"
+  )
+  if err:
+    return err
+  err, course_id, tag = get_course(user, course)
+  if err:
+    return err
+  err, aid = get_assignment(course, asg)
+  if err:
+    return err
+  status = storage.enrollment_status(user, course_id)
+  err, txt = assignment_text(context, course_id, status, aid)
+  if err:
+    return err
+  return txt
+
+def cmd_view_submission(context, *args):
+  user = context["user"]
+  on_behalf_of = user
+  you = "you"
+  your = "your"
+  have = "have"
+  show_all = False
+  if "-all" in args:
+    args.remove("-all")
+    show_all = True
+  if '@' in args[0]:
+    on_behalf_of = args[0]
+    you = "user {}".format(on_behalf_of)
+    your = "user {}'s".format(on_behalf_of)
+    have = "has"
+    args = args[1:]
+
+  ( err, (course, asg) ) = unpack_args(
+    "view-submission",
+    args,
+    2,
+    "a course and an assignment"
+  )
+  if err:
+    return err
+
+  err, (course_id, tag) = get_course(user, course)
+  if err:
+    return err
+
+  if on_behalf_of != user:
+    err = check_course_auth(context, course_id, "set expected students for")
+    if err:
+      return err
+
+  err, aid = get_assignment(course_id, asg)
+  if err:
+    return err
+
+  lot, llate = storage.get_rep_submissions_for(
+    on_behalf_of,
+    aid,
+    context["now"],
+    finalized=False
+  )
+  otg = "  Grade info not yet available."
+  lateg = "  Grade info not yet available."
+  if lot["grade"]:
+    otg = "  Grade: {}%\n  Feedback:\n{}".format(
+      round(100 * lot["grade"], 1),
+      lot["feedback"]
+    )
+  if llate["grade"]:
+    lateg = "  Grade: {}%\n  Feedback:\n{}".format(
+      round(100 * llate["grade"], 1),
+      llate["feedback"]
+    )
+
+  if not lot and not llate:
+    return "{} {} not submitted assignment '{}' in course {}.".format(
+      you.title(),
+      have,
+      asg,
+      tag
+    )
+  elif not llate:
+    return """\
+{} latest submission for assignment '{}' in course {}:
+  Submitted on time at {} UTC.
+  Content was:
+    {}
+{}\
+""".format(
+  your.title(),
+  asg,
+  tag,
+  formats.date_string(formats.date_for(lot["timestamp"])),
+  "\n    ".join(lot["content"].split("\n")),
+  otg
+)
+  elif not lot:
+    return """\
+{} latest submission for assignment '{}' in course {}:
+  Submitted late at {} UTC.
+  Content was:
+    {}
+{}\
+""".format(
+  your.title(),
+  asg,
+  tag,
+  formats.date_string(formats.date_for(llate["timestamp"])),
+  "\n    ".join(llate["content"].split("\n")),
+  lateg
+)
+  else: # both
+    return """\
+{} latest submissions for assignment '{}' in course {}:
+  Last on-time was submitted at {} UTC.
+  Content was:
+    {}
+{}
+  Last late was submitted at {} UTC.
+  Content was:
+    {}
+{}\
+""".format(
+  your.title(),
+  asg,
+  tag,
+  formats.date_string(formats.date_for(lot["timestamp"])),
+  "\n    ".join(lot["content"].split("\n")),
+  otg,
+  formats.date_string(formats.date_for(llate["timestamp"])),
+  "\n    ".join(llate["content"].split("\n")),
+  lateg
+)
+
+def cmd_submit(context, *args):
+  user = context["user"]
+
+  ( err, (course, asg, answers) ) = unpack_args(
+    "submit",
+    args,
+    3,
+    "a course, an assignment, and an answers map"
+  )
+  if err:
+    return err
+
+  err = check_user_auth(context, user, "submit assignments"):
+  if err:
+    return err
+
+  err, (course_id, tag) = get_course(course)
+  if err:
+    return err
+
+  err, aid = get_assignment(course_id, asg)
+  if err:
+    return err
+
+  status = storage.enrollment_status(user, course_id)
+  if status == "none":
+    return "Error: cannot submit '{}' in {} as you are not enrolled.".format(
+      asg,
+      tag
+    )
+
+  return delegate(storage.submit_assignment(user, aid, context["now"], answers))
 
 COMMANDS = {
   "help": {
@@ -886,69 +1234,69 @@ Grants a user's request. It requires user authorization from the granting party 
 """
 # TODO: log requests & permission changes
   },
-  "create_course": {
-    "name": "create_course",
+  "create-course": {
+    "name": "create-course",
     "run" : cmd_create_course,
     "priority": 10,
     "argdesc": "<institution> <name> <term> <year>",
     "desc": "(requires auth) Creates a new course, assigning the creator as an instructor.",
     "help": """\
 Help for command:
-  :create_course
+  :create-course
 
 Usage examples:
   :auth instructor@example.com c3ed3ab84e43f0c74a35b206ec43149a
-  :create_course example-college test-course spring 1948
+  :create-course example-college test-course spring 1948
 
 Creates a new course and assigns the creator as an instructor. It requires user authentication for the creator (the sender) who must be have either the 'admin' or 'instructor' role system-wide (this is different from being an instructor on a course). Note that none of the course elements may contain the '@' or '/' symbols.
 
 The response to this command will include an authentication token for the new course, which the creator should keep track of.
 """
   },
-  "add_instructor": {
-    "name": "add_instructor",
+  "add-instructor": {
+    "name": "add-instructor",
     "run" : cmd_add_instructor,
     "priority": 10,
     "argdesc": "<user> <course>",
     "desc": "(requires auth) Adds the given user as an instructor for the given course.",
     "help": """\
 Help for command:
-  :add_instructor
+  :add-instructor
 
 Usage examples:
   :auth example-college/test-course/summer/2021 7b839a93c1012d2029cbe7d048716b34
-  :add_instructor test@example.com example-college/test-course/summer/2021
+  :add-instructor test@example.com example-college/test-course/summer/2021
 
 Adds the given user as an instructor for the given course. Course-level authentication is required.
 """
   },
-  "create_assignment": {
-    "name": "create_assignment",
+  "create-assignment": {
+    "name": "create-assignment",
     "run" : cmd_create_assignment,
     "priority": 10,
     "argdesc": "<course> <assignment>",
     "desc": "(requires auth) Creates a new assignment for the given course.",
     "help": """\
 Help for command:
-  :create_assignment
+  :create-assignment
 
 Usage examples:
-  :auth example-college/test-course/spring/2150 846fc9b98ac4b5a859d5ded801154ce6
-  :create_assignment
-    example-college/test-course/spring/2150
+  :auth example-college/test-course/spring/2019 846fc9b98ac4b5a859d5ded801154ce6
+  :create-assignment
+    example-college/test-course/spring/2019
     map{
       name : quiz-1
       type : quiz
       value : 1.0
       flags : list{ shuffle-problems }
   > This assignment will be published on January 25th at midnight (the beginning of the day, i.e., right after the end of January 24th):
-      publish : 2150-1-25T00:00:00
+      publish : 2019-1-25T00:00:00
   > It's due by the end of January 30th:
-      due : 2150-1-30T23:59:59
+      due : 2019-1-30T23:59:59
   > But submissions won't really be marked as late until 4:00 a.m. on January 31st:
-      really-due : 2150-1-31T04:00:00
+      really-due : 2019-1-31T04:00:00
   > Even late submissions won't be accepted after February 7th:
-      reject-after : 2150-2-8T00:00:00
+      reject-after : 2019-2-8T00:00:00
   > The 'problems' value defines individual problems. Be careful not to include a valid command (a word starting with a ':') in any of the problem definitions. The problems are parsed as a 'list{' of 'map{' blocks (see ':help list' and ':help map').
       problems : list{
         map{
@@ -980,9 +1328,112 @@ Usage examples:
     }
 
 
-':create_assignment' creates a new assignment in the given course. It requires two arguments: a course ID, tag, or alias, and an assignment map. For the details of the format of the assignment map, see ':help assignment'. ':help problem' gives details on the format of individual problems.
+':create-assignment' creates a new assignment in the given course. It requires two arguments: a course ID, tag, or alias, and an assignment map. For the details of the format of the assignment map, see ':help assignment'. ':help problem' gives details on the format of individual problems.
+"""
+  },
+  "list-assignments": {
+    "name": "list-assignments",
+    "run" : cmd_list_assignments,
+    "priority": 10,
+    "argdesc": "[-any] [<course>]",
+    "desc": "Lists all assignments for the given course (or all enrolled courses).",
+    "help": """\
+Help for command:
+  :list-assignments
 
-Note that
+Usage examples:
+  :list-assignments
+  :list-assignments -any
+  :list-assignments example-college/test-course/spring/2019
+  :list-assignments -any example-college/test-course/spring/2019
+  :list-assignments example-college/test-course/spring/2019 -any
+  :list-assignments example-college/test-course/spring/2019 example-college/other-course/spring/2019
+
+Responds with a list of all currently-open assignments. You must be enrolled in a class to view assignments. If 'any' is given as an argument, closed assignments and submitted-to assignments will also be included. The list includes an assignment's status and name, information about your last submission time, and the due date or closing date. See also ':help assignment-status' and ':help submit'.
+"""
+  },
+  "assignment-status": {
+    "name": "assignment-status",
+    "run" : cmd_assignment_status,
+    "priority": 10,
+    "argdesc": "<course> <assignment>",
+    "desc": "Shows the status of an assignment.",
+    "help": """\
+Help for command:
+  :assignment-status
+
+Usage examples:
+  :assignment-status example-college/test-course/spring/2000 quiz-1
+
+Responds with details about the specified assignment. These include the due date (or closing date for past-due assignments), your latest submission time, and your grade if the assignment has been graded. See also ':help list-assignments', ':help submit', and ':help assignment'.
+"""
+  },
+  "assignment": {
+    "name": "assignment",
+    "run" : cmd_assignment,
+    "priority": 10,
+    "argdesc": "<course> <assignment>",
+    "desc": "Displays an assignment.",
+    "help": """\
+Help for command:
+  :assignment
+
+Usage examples:
+  :assignment example-college/test-course/spring/2000 quiz-1
+
+Responds with the requested assignment, including each problem and a solution template. See ':help submit' for how to submit answers.
+""" # TODO: require enrollment to view assignments/assignment statuses?
+  },
+  "view-submission": {
+    "name": "view-submissions",
+    "run" : cmd_view_submission,
+    "priority": 10,
+    "argdesc": "[<user>] <course> <assignment> [-all]",
+    "desc": "(requires auth) Shows the latest submission for an assignment.",
+    "help": """\
+Help for command:
+  :view-submissions
+
+Usage examples:
+  :auth me@example.com c3ed3ab84e43f0c74a35b206ec43149a
+  :view-submissions example-college/test-course/spring/2000 quiz-1
+
+  :auth me@example.com c3ed3ab84e43f0c74a35b206ec43149a
+  :view-submissions example-college/test-course/spring/2000 quiz-1 -all
+
+  :auth example-college/test-course/spring/2000 846fc9b98ac4b5a859d5ded801154ce6
+  :view-submissions other.user@example.com example-college/test-course/spring/2000 quiz-1 -all
+
+By default, responds with the content sender's latest submission to the given assignment in the given course. If '-all' is given, it will instead reply with all submissions to that assignment. This requires user authentication. If the assignment is past-due, both the latest-on-time and actual-latest submissions will be shown.
+
+If a user different from the sender is given, it requires course authentication for the course in question instead of user authentication.
+
+See also: ':help submit' and ':help assignment-status'.
+"""
+  },
+  "submit": {
+    "name": "submit",
+    "run" : cmd_submit,
+    "priority": 10,
+    "argdesc": "<course> <assignment> <content>",
+    "desc": "(requires auth) Submits an assignment.",
+    "help": """\
+Help for command:
+  :submit
+
+Usage examples:
+  :auth me@example.com c3ed3ab84e43f0c74a35b206ec43149a
+  :submit example-college/test-course/fall/2004 quiz-1
+  map{
+    1: A
+    2: B
+    problem-name: Answer-selection
+    Q: text{ A sentence as an answer }
+  }
+
+Submits answers for an assignment. Requires user authentication as the sending user. You must be enrolled in the class that you're submitting to, and the assignment must be accepting submissions (see ':help assignment-status'). When you view an assignment with ':assignment' the last part of the result will include a submission template, it is a good idea to start by copying this template and then editing it to ensure your answers are correctly formatted. If your submission is badly formatted, you'll get an error message. You can use :view-submissions to check what you've submitted.
+
+In most cases, you can submit multiple times and only the most-recent submission will be used for grading. Be sure to consult your course syllabus or instructor about this however.
 """
   },
 }
@@ -1001,16 +1452,16 @@ Usage examples:
       type : quiz
       value : 1.0
       flags : list{ shuffle-problems }
-      publish : 2150-1-25T00:00:00
-      due : 2150-1-30T23:59:59
-      late-after : 2150-1-31T04:00:00
-      reject-after : 2150-2-8T00:00:00
+      publish : 2019-1-25T00:00:00
+      due : 2019-1-30T23:59:59
+      late-after : 2019-1-31T04:00:00
+      reject-after : 2019-2-8T00:00:00
       problems : list{
         ...
       }
     }
 
-    The create_assignment command requires an assignment map as an argument. The meaning of assignment keys is as follows:
+    The create-assignment command requires an assignment map as an argument. The meaning of assignment keys is as follows:
 
   'name'
     Specifies the name of the assignment. This must be unique within a course, and is used by students when submitting the assignment, so it should be short and simple.
@@ -1040,7 +1491,7 @@ Usage examples:
   'problems'
     The value for this key must be a list of 'problem' maps (see ':help list', ':help map', and ':help problem').
 
-Note that any valid command will cut off the arguments of ':create_assignment', so commands cannot be included anywhere in assignment or problem definitions.
+Note that any valid command will cut off the arguments of ':create-assignment', so commands cannot be included anywhere in assignment or problem definitions.
 """
   },
   "problem": {
@@ -1096,13 +1547,13 @@ Help for topic:
   assignment-types
 
 Usage examples:
-  :create_assignment
-    example-college/test-course/spring/2150
+  :create-assignment
+    example-college/test-course/spring/2019
     quiz-1
     quiz
     ...
 
-The type argument to the ':create_assignment' command (see ':help create_assignment') specifies how the assignment is presented and managed. Valid types are:
+The type argument to the ':create-assignment' command (see ':help create-assignment') specifies how the assignment is presented and managed. Valid types are:
 
   'quiz'
     A 'quiz' assignment just has a list of problems.

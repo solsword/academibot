@@ -8,10 +8,30 @@ Storage abstraction for academibot. Backs out to an sqlite3 database and
 import sqlite3
 import os
 import datetime
+import collections
 
 import config
 
+import formats
+
+REQ_F = collctions.namedtuple(
+  "request",
+  ["type", "value", "status"]
+)
+
+ENR_F = collctions.namedtuple(
+  "enrollment",
+  ["course_id", "user", "status"]
+)
+
+SUB_F = collctions.namedtuple(
+  "submission",
+  ["id", "user", "timestamp", "content", "feedback", "grade"]
+)
+
 DBCON = None
+
+LINE_LENGTH = 80
 
 ##########################
 # Convenience functions: #
@@ -185,7 +205,7 @@ def unique_result_single(results, errmsg="<unknown>"):
 # Authentication functions: #
 #############################
 
-def now():
+def now_ts():
   return datetime.datetime.now().timestamp()
 
 def new_auth():
@@ -213,7 +233,7 @@ def auth_course(course_id, auth):
   else:
     return against
 
-def auth_token(user, purpose, auth):
+def auth_token(now, user, purpose, auth):
   cur = DBCON.cursor()
   cur.execute(
     "SELECT token, start, end FROM tokens WHERE user = ? AND purpose = ?;",
@@ -222,27 +242,27 @@ def auth_token(user, purpose, auth):
   rows = cur.fetchall()
   if len(rows) == 0:
     return False
-  ts = now()
   for r in rows:
-    if r["start"] > ts:
+    if r["start"] > now:
       return False
-    if r["end"] < ts:
+    if r["end"] < now:
       return False
     return check_auth(auth, r["token"])
 
 def create_token(
   user,
   purpose,
+  now,
   start="now",
   duration=config.TEMP_AUTH_INTERVAL
 ):
   cur = DBCON.cursor()
   if start == "now":
-    start = now()
+    start = now
   end = start + duration
   token = new_auth()
   cur.execute(
-   "INSERT INTO tokens(user, token, purpose, start, end) values(?, ?, ?, ?, ?)",
+   "INSERT INTO tokens(user, token, purpose, start, end) values(?, ?, ?, ?, ?);",
     (user, token, purpose, start, end)
   )
   return token
@@ -252,7 +272,7 @@ def clean_tokens():
   Removes expired temporary authentication tokens from the database.
   """
   cur = DBCON.cursor()
-  ts = now()
+  ts = now_ts()
   cur.execute("DELETE FROM tokens WHERE end < ?;", (ts,))
   DBCON.commit()
 
@@ -293,15 +313,27 @@ def get_course_id(user, id_or_tag_or_alias, id_cache = {}):
         "SELECT id FROM courses WHERE institution = ? AND name = ? AND term = ? AND year = ?;",
         spl
       )
-      return unique_result_single(cur.fetchall())
+      return unique_result_single(
+        cur.fetchall(),
+        "course {}/{}/{}/{}".format(
+          institution,
+          name,
+          term,
+          year
+        )
+      )
     else:
       cur.execute(
         "SELECT id FROM aliases WHERE user = ? AND alias = ?;",
         (user, id_or_tag_or_alias)
       )
-      return unique_result_single(cur.fetchall())
+      return unique_result_single(
+        cur.fetchall(),
+        "alias '{}'".format(id_or_tag_or_alias)
+      )
 
 def course_tag(course_id, tag_cache = {}):
+  # TODO: course renaming...
   if course_id in tag_cache:
     return tag_cache[course_id]
   cur = DBCON.cursor()
@@ -309,9 +341,13 @@ def course_tag(course_id, tag_cache = {}):
     "SELECT institution, name, term, year FROM courses WHERE id = ?;",
     (course_id,)
   )
-  result = "/".join(unique_result(cur.fetchall()))
-  tag_cache[course_id] = result
-  return result
+  row = unique_result(cur.fetchall(), "course #{}".format(course_id))
+  if row:
+    result = "/".join(row)
+    tag_cache[course_id] = result
+    return result
+  else:
+    return "<unknown course #{}>".format(course_id)
 
 def aliases_for(user, course_id):
   cur = DBCON.cursor()
@@ -332,7 +368,7 @@ def courses_enrolled(user):
 def add_user(addr, role="default", status="active"):
   cur = DBCON.cursor()
   cur.execute("SELECT addr FROM users WHERE addr = ?;", (addr,))
-  existing = unique_result_single(cur.fetchall())
+  existing = unique_result_single(cur.fetchall(), "user '{}'".format(addr))
   if existing or existing == False:
     print(
       "Warning: attempt to add existing user '{}'".format(addr),
@@ -353,7 +389,7 @@ def add_user(addr, role="default", status="active"):
 
 def is_registered(user):
   cur = DBCON.cursor()
-  cur.execute("SELECT addr FROM users WHERE addr = ?", (user,))
+  cur.execute("SELECT addr FROM users WHERE addr = ?;", (user,))
   result = unique_result_single(cur.fetchall(), "user '{}'".format(user))
   if result == None:
     return False
@@ -427,6 +463,22 @@ def enrollment_status(user, course_id):
   )
   return result or "none"
 
+def all_enrollments(user):
+  cur = DBCON.cursor()
+  cur.execute(
+    "SELECT course_id, user, status FROM enrollment WHERE user = ?;",
+    (user,)
+  )
+  return [ ENR_F(*r) for r in cur.fetchall() ]
+
+def enrolled_users(course_id):
+  cur = DBCON.cursor()
+  cur.execute(
+    "SELECT course_id, user, status FROM enrollment WHERE course_id = ?;",
+    (course_id,)
+  )
+  return [ ENR_F(*r) for r in cur.fetchall() ]
+
 ######################
 # Request functions: #
 ######################
@@ -459,7 +511,7 @@ def outstanding_requests(user=None):
       "SELECT typ, value, status FROM requests WHERE user = ?;",
       (user,)
     )
-  return cur.fetchall()
+  [REQ_F(*row) for row in cur.fetchall()]
 
 def submit_request(user, typ, value):
   cur = DBCON.cursor()
@@ -754,8 +806,321 @@ def enroll_student(course_id, user):
 #########################
 
 def create_assignment(course_id, assignment):
-  # TODO: HERE
+  # Check and normalize assignment structure:
+  valid, err = formats.process_assignment(assignment):
+  if !valid:
+    return (False, err)
+  raw = unparse(assignment)
+
+  # Check that the course exists:
+  cur = DBCON.cursor()
+  cur.execute("SELECT course_id FROM courses WHERE course_id = ?;",(course_id,))
+  valid = unique_result_single(cur.fetchall(), "course #{}".format(course_id))
+  if not valid:
+    return (
+      False,
+      "Couldn't find course #{}.".format(course_id)
+    )
+  tag = course_tag(course_id)
+
+  # Check assignment name uniqueness:
+  cur.execute(
+    "SELECT id FROM assignments WHERE course_id = ? AND name = ?;",
+    (course_id, assignment["name"])
+  )
+  if len(cur.fetchall()) > 0:
+    return (
+      False,
+      "Assignment '{}' already exists in course {}.".format(
+        assignment["name"],
+        tag
+      )
+    )
+
+  # create the assignment:
+  cur.execute(
+    "INSERT INTO assignments(course_id, name, publish_at, due_at, late_after, reject_after, content) values(?, ?, ?, ?, ?, ?, ?);",
+    (
+      course_id,
+      assignment["name"],
+      assignment["publish"].timestamp(),
+      assignment["due"].timestamp(),
+      assignment["late-after"].timestamp(),
+      assignment["reject-after"].timestamp(),
+      raw
+    )
+  )
+  DBCON.commit()
+  return (
+    True,
+    "Successfully created assignment '{}' for course {}.".format(
+      assignment["name"],
+      tag
+    )
+  )
+
+def get_assignment_id(course_id, name):
+  tag = course_tag(course_id)
+  cur = DBCON.cursor()
+  cur.execute(
+    "SELECT id FROM assignments WHERE course_id = ? AND name = ?;",
+    (course_id, name)
+  )
+  return unique_result_single(
+    cur.fetchall(),
+    "course #{} / assignment '{}'".format(course_id, name)
+  )
+
+def get_assignment_content(aid):
+  cur = DBCON.cursor()
+  cur.execute(
+    "SELECT content FROM assignments WHERE id = ?;",
+    (aid,)
+  )
+  content = unique_result_single(cur.fetchall(), "assignment #{}".format(aid))
+  if not content:
+    return (None, "Bad assignment id #{}.".format(aid))
+  result = formats.parse(content)
+  valid, err = formats.process_assignment(result)
+  if not valid:
+    return (None, err)
+  return (result, "Fetched assignment #{}.".format(aid))
+
+def get_assignment_info(aid):
+  cur = DBCON.cursor()
+  cur.execute(
+    "SELECT name, publish_at, due_at, late_after, reject_after FROM assignments WHERE id = ?;",
+    (aid,)
+  )
+  return unique_result(cur.fetchall(), "assignment #{}".format(aid))
+
+def assignments_for(course_id, now, mode="all"):
+  cur = DBCON.cursor()
+  if mode == "current"
+    cur.execute(
+      "SELECT id FROM assignments WHERE course_id = ? AND publish_at <= ? AND reject_after >= ?;",
+      (course_id, now, now)
+    )
+  elif mode == "future"
+    cur.execute(
+      "SELECT id FROM assignments WHERE course_id = ? AND reject_after >= ?;",
+      (course_id, now)
+    )
+  else: # mode -> "all"
+    cur.execute(
+      "SELECT id FROM assignments WHERE course_id = ?;",
+      (course_id,)
+    )
+  results = cur.fetchall()
+  return [
+    r["id"]
+    for r in results
+  ]
 
 #########################
 # Submission functions: #
 #########################
+
+def submit_assignment(user, aid, now, submission):
+  assignment, err = get_assignment_content(aid)
+  if err:
+    return (False, err)
+  valid, err = formats.check_submission(assignment, submission)
+  if err:
+    return (False, err)
+  raw = formats.unparse(submission)
+  cur = DBCON.cursor()
+  cur.execute(
+    "INSERT INTO submissions(user, assignment_id, timestamp, content, feedback, grade) values(?, ?, ?, ?, ?, ?);",
+    (user, aid, now, raw, "", None)
+  )
+  DBCON.commit()
+  return (
+    True,
+    "Added new submission for assignment '{}' from user {}.".format(
+      assignment["name"],
+      user
+    )
+  )
+
+def get_all_submissions_to(aid):
+  cur = DBCON.cursor()
+  cur.execute(
+    "SELECT id, user, timestamp, content, feedback, grade FROM submissions WHERE assignment_id = ?;"
+    (aid,)
+  )
+  return [SUB_F(*row) for row in cur.fetchall()]
+
+def get_submissions_for(user, aid):
+  cur = DBCON.cursor()
+  cur.execute(
+    "SELECT id, user, timestamp, content, feedback, grade FROM submissions WHERE user = ? AND assignment_id = ?;"
+    (user, aid)
+  )
+  return [SUB_F(*row) for row in cur.fetchall()]
+
+
+def get_rep_submissions_for(user, aid, now, finalized=True, any_late=False):
+  cur = DBCON.cursor()
+  cur.execute(
+    "SELECT late_after, reject_after FROM assignments WHERE id = ?;",
+    (aid,)
+  )
+  row = unique_result(cur.fetchall(), "assignment #{}".format(aid))
+  if not row:
+    return (None, None)
+
+  late, reject = row
+
+  submissions = get_submissions_for(user, aid)
+
+  last_on_time = None
+  last_late = None
+  for sub in submissions:
+    sid, suser, stime, content, feedback, grade = sub
+    if (
+      stime <= late
+    and (not finalized or now >= late)
+    ):
+      if last_on_time == None or stime > last_on_time["timestamp"]:
+        last_on_time = sub
+    if (
+      stime > late
+    and stime <= reject
+    and (not finalized or any_late or now >= reject)
+    ):
+      if last_late == None or stime > last_late["timestamp"]:
+        last_late = sub
+  return last_on_time, last_late
+
+######################
+# Grading functions: #
+######################
+
+def grade_for(user, aid, now):
+  cur = DBCON.cursor()
+  cur.execute(
+    "SELECT late_after, content FROM assignments WHERE id = ?;",
+    (aid,)
+  )
+  row = unique_result(cur.fetchall(), "assignment #{}".format(aid))
+  if not row:
+    return (
+      "Error: could not find assignment #{}.".format(aid),
+      (
+        None,
+        "Error finding assignment for this submission."
+      )
+    )
+  assignment = formats.parse(row["content"])
+  valid, err = formats.process_assignment(assignment)
+  if (!valid):
+    return (err, (None, "Error: could not parse assignment from database."))
+
+  if now < row["late-after"]: # before the true deadline
+    return (
+      "",
+      (
+        None,
+        "Grades for assignment '{}' are not available until {} UTC.".format(
+          formats.date_string(formats.date_for(row["late-after"]))
+        )
+      )
+    )
+
+  # TODO: allow instructors to set late policies.
+  late_policy = grading.flat_penalty_late_policy(0.5)
+  last_ot, last_late = get_rep_submissions_for(
+    user,
+    aid,
+    now,
+    finalized = True,
+    any_late = "grade-late-immediately" in assignment["flags"]
+  )
+  err, (grade, feedback) = grading.assignment_grade(
+    assignment,
+    row["late_after"]
+    late_policy,
+    # TODO: take multiple late submissions into account?
+    (last_ot, last_late)
+  )
+  if err:
+    return (err, (None, "Error: could not compute grade."))
+  return ("", (grade, feedback))
+
+def set_grade_info(sid):
+  cur = DBCON.cursor()
+  cur.execute(
+    "SELECT user, assignment_id, content FROM submissions WHERE id = ?;",
+    (sid,)
+  )
+  row = unique_result(cur.fetchall(), "submission #{}".format(sid))
+  if not row:
+    return (False, "Unknown submission #{}.".format(sid))
+
+  assignment, msg = get_assignment_content(row["assignment_id"])
+  if not assignment:
+    return (False, "Couldn't find assignment #{}.".format(row["assignment_id"]))
+
+  err, (grade, feedback) = grading.submission_grade(
+    assignment,
+    formats.parse(row["content"])
+  )
+  if err:
+    return (False, err)
+
+  cur.execute(
+    "UPDATE submissions SET grade = ? AND feedback = ? WHERE id = ?;",
+    (grade, feedback, sid)
+  )
+  DBCON.commit()
+  return (True, "Updated grade info for submission #{}.".format(sid))
+
+def maintain_grade_info(last_ts, now):
+  cur = DBCON.cursor()
+  cur.execute(
+    "SELECT id, late_after, reject_after, content FROM assignments;",
+    (,)
+  )
+  process_on_time = []
+  process_late = []
+  for row in list(cur.fetchall()):
+    assignment = formats.process_assignment(row["content"])
+    if now >= row["late_after"] and last_ts < row["late_after"]:
+      process_on_time.append((row["id"], row["late_after"]))
+    
+    if (
+      "grade-late-immediately" in assignment["flags"]
+    or (now >= row["reject_after"] and last_ts < row["reject_after"])
+    ):
+      process_late.append((row["id"], row["late_after"], row["reject_after"]))
+
+  for aid, late in process_on_time:
+    cur.execute(
+      "SELECT id, grade FROM submissions WHERE assignment_id = ? AND timestamp <= ?;",
+      (aid, late)
+    )
+    for row in cur.fetchall():
+      success, msg = set_grade_info(row[0])
+      if not success:
+        print(
+          "Error setting grade info for submission #{}:\n  {}".format(
+            row[0],
+            msg
+          )
+        )
+
+  for aid, late, reject in process_late:
+    cur.execute(
+      "SELECT id, grade FROM submissions WHERE assignment_id = ? AND timestamp > ? AND timestamp <= ?;",
+      (aid, late, reject)
+    )
+    for row in cur.fetchall():
+      success, msg = set_grade_info(row[0])
+      if not success:
+        print(
+          "Error setting grade info for submission #{}:\n  {}".format(
+            row[0],
+            msg
+          )
+        )

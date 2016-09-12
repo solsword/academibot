@@ -6,11 +6,12 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import os
 import mimetypes
+import getpass
 
 import config
 
 """
-async.py
+mail.py
 Asyncrhonous email checking via IMAP4 (receive) and SMTP (send).
 
 Roughly based on:
@@ -148,6 +149,71 @@ To halt all further messages from {address}, reply with the text ":block"
         if payload:
           body += payload
     return body
+
+class AsyncEmailChannel(channel.Channel):
+  def __init__(self, myaddr, username):
+    self.addr = myaddr
+    self.username = username
+    self.password = None
+    self.connection = None
+    self.outbound = []
+
+  def __str__(self):
+    return "an asynchronous email channel via {}".format(self.addr)
+
+  def setup(self):
+    # TODO: don't store password even in RAM? (in Connection as well)
+    self.password = getpass.getpass(
+      "Enter password for user '{}':".format(self.username)
+    )
+    self.connection = Connection(
+      self.myaddr,
+      self.username,
+      self.password
+    )
+
+  def poll(self):
+    self.connection.prepare_receive()
+    messages = self.connection.check_mail()
+    self.connection.done_receiving()
+    return [
+      (
+        m["from"], # TODO: Better sender authentication!
+        m["body"],
+        self.respond_function(m)
+      )
+      for m in messages
+    ]
+
+  def respond_function_for(self, message):
+    def rf(response_text):
+      reply = {
+        "to": [message["from"]],
+        "subject": "Re: " + message["subject"],
+        "body": response_text,
+        "references": "{}{}".format(
+          message["references"] + " " if message["references"] else "",
+          message["mid"],
+        ),
+      }
+      self.outbound.append(reply)
+    return rf
+
+  def flush(self):
+    if len(self.outbound) == 0:
+      return
+
+    if not self.connection:
+      self.connection = Connection(
+        self.myaddr,
+        self.username,
+        self.password
+      )
+
+    self.connection.prepare_send()
+    while len(self.outbound) > 0:
+      self.connection.send_message(**self.outbound.pop())
+    self.connection.done_sending()
 
 def test_message():
   con = Connection(
