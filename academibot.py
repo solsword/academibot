@@ -9,6 +9,7 @@ import mail
 import storage
 import commands
 import config
+import traceback
 
 import time
 
@@ -25,15 +26,15 @@ def process(sender, body, reply_function, now):
     if not unblock:
       return
   if cmds:
-    response = commands.handle_commands(sender, message, cmds, now)
+    response = commands.handle_commands(sender, body, cmds, now)
     reply_function(response)
 
-def run_server(channels):
+def run_server(channels, db_name="academibot.db", interval=10):
   print("Starting academibot with channels:")
   for c in channels:
     print("  ..." + str(c) + "...")
   print("...setting up storage...")
-  storage.setup()
+  storage.setup(db_name)
   print("...setting up channels...")
   for c in channels:
     c.setup()
@@ -59,29 +60,33 @@ def run_server(channels):
             process(sender, body, rf, now)
           except Exception as e:
             print(e)
+            traceback.print_exc()
             print("...error processing message; ignoring...")
         print("...flushing channels...")
         for c in channels:
           c.flush()
-        print("...done; sleeping for {} seconds...".format(config.INTERVAL))
-        time.sleep(config.INTERVAL)
+        print("...done; sleeping for {} seconds...".format(interval))
+        time.sleep(interval)
       except Exception as e:
         if type(e) == KeyboardInterrupt:
           raise e
         print(e)
+        traceback.print_exc()
         print(
           "Processing error. Retrying next interval ({} seconds).".format(
-            str(config.INTERVAL)
+            str(interval)
           )
         )
-        time.sleep(config.INTERVAL)
+        time.sleep(interval)
   except KeyboardInterrupt:
     pass
   print("Exiting academibot (incoming email will be ignored).")
 
 def main():
   run_server(
-    [mail.AsyncEmailChannel(config.MYADDR, config.USERNAME)]
+    [mail.AsyncEmailChannel(config.MYADDR, config.USERNAME)],
+    config.DATABASE,
+    interval=config.INTERVAL
   )
 
 if __name__ == "__main__":

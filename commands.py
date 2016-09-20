@@ -5,8 +5,10 @@ academibot commands.
 
 import storage
 import formats
+import config
 
 def parse(body):
+  words = []
   body = body.replace('\r', '')
   lines = body.split('\n')
   lines = [l.strip() for l in lines]
@@ -37,6 +39,8 @@ def sort_commands(cmds):
   return result
 
 def get_commands(words):
+  if not words:
+    return []
   head, tail = words[0], words[1:]
   if head[0] == ':' and head[1:] in COMMANDS:
     args, rest = get_args(tail)
@@ -46,6 +50,8 @@ def get_commands(words):
     return get_commands(tail)
 
 def get_args(words):
+  if not words:
+    return ([], [])
   head, tail = words[0], words[1:]
   if head[0] == ":" and head[1:] in COMMANDS:
     return ([], words)
@@ -200,19 +206,19 @@ Finally, there are some other general help topics:
       cmd = c["name"],
       ad = " " + c["argdesc"] if c["argdesc"] else "",
       d = c["desc"]
-    ) for c in sorted(COMMANDS.values(), key=labda c: c["name"])
+    ) for c in sorted(COMMANDS.values(), key=lambda c: c["name"])
   ),
   formatlist = "\n".join(
     "  {fmt}{{ -- {d}".format(
       fmt = f["name"],
       d = f["desc"]
-    ) for f in sorted(formats.FORMATS.values(), key=labda f: f["name"])
+    ) for f in sorted(formats.FORMATS.values(), key=lambda f: f["name"])
   ),
   topiclist = "\n".join(
     "  {topic} -- {d}".format(
       topic = t["name"],
       d = t["desc"]
-    ) for t in sorted(TOPICS.values(), key=labda t: t["name"])
+    ) for t in sorted(TOPICS.values(), key=lambda t: t["name"])
   ),
 )
   body = ""
@@ -236,7 +242,7 @@ Full command was understood as:
 
 {general}
 """.format(
-  bad = cmd,
+  bad = topic,
   general = general
 )
   return body
@@ -332,7 +338,7 @@ You will have to use this token to prove your identity for some commands by send
 :auth {user} {token}
 """.format(user=user, token=token)
   else:
-    token = create_token(
+    token = storage.create_token(
       user,
       "register",
       context["now"],
@@ -466,7 +472,7 @@ def cmd_grant(context, *args):
   if err:
     return err
 
-  err = check_user_auth(context, user, "grant requests"):
+  err = check_user_auth(context, user, "grant requests")
   if err:
     return err
 
@@ -487,7 +493,7 @@ Error: only admins may grant requests. To request admin privileges send:
 def cmd_create_course(context, *args):
   user = context["user"]
   err, (institution, name, term, year) = unpack_args(
-    "create-course"
+    "create-course",
     args,
     4,
     "four arguments (institution, course name, term, and year)"
@@ -683,7 +689,7 @@ Submissions summary ({} student{}):
       )
     else:
       sub_status = "submitted on-time at {} UTC and late at {} UTC".format(
-        formats.date_string(formats.date_for(last_on_time["timestamp"]))
+        formats.date_string(formats.date_for(last_on_time["timestamp"])),
         formats.date_string(formats.date_for(last_late["timestamp"]))
       )
     sinfo = ""
@@ -713,7 +719,7 @@ Submissions summary ({} student{}):
       ngv = len(grade_values)
       if ngv % 2:
         median = grade_values[ngv // 2]
-      else
+      else:
         median = (grade_values[ngv // 2] + grade_values[(ngv // 2) + 1]) / 2
     else:
       mean = "<no grades>"
@@ -725,7 +731,7 @@ Submissions summary ({} student{}):
       ngv = len(submitted_grades)
       if ngv % 2:
         smedian = submitted_grades[ngv // 2]
-      else
+      else:
         smedian = (submitted_grades[ngv // 2] + submitted_grades[(ngv //2)+1])/2
     else:
       smean = "<nothing submitted>"
@@ -1011,7 +1017,7 @@ def cmd_submit(context, *args):
   if err:
     return err
 
-  err = check_user_auth(context, user, "submit assignments"):
+  err = check_user_auth(context, user, "submit assignments")
   if err:
     return err
 

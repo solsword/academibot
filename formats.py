@@ -37,6 +37,8 @@ def date_string(d):
   return d.strftime("%Y-%m-%dT%H:%M:%S")
 
 def parse(words):
+  if not words:
+    return []
   head, tail = words[0], words[1:]
   if head[-1] == '{' and head[:-1] in FORMATS:
     token, leftover = FORMATS[head[:-1]]["parser"](tail)
@@ -254,9 +256,9 @@ def fmt_map(words, key=None, sofar=None):
   else:
     if key:
       sofar[key] = head
-      return fmt_map(tail, key=None, sofar)
+      return fmt_map(tail, key=None, sofar=sofar)
     else:
-      return fmt_map(tail, key=head, sofar)
+      return fmt_map(tail, key=head, sofar=sofar)
 
 #######################
 # Format definitions: #
@@ -266,7 +268,7 @@ FORMATS = {
   "text": {
     "name": "text",
     "parser": fmt_text,
-    "desc": "Combines words into a single chunk of text."
+    "desc": "Combines words into a single chunk of text.",
     "help": """\
 Help for format:
   text{
@@ -287,7 +289,7 @@ The 'text{' format combines all tokens until the matching '}' into a single chun
   "list": {
     "name": "list",
     "parser": fmt_list,
-    "desc": "Combines tokens into a list."
+    "desc": "Combines tokens into a list.",
     "help": """\
 Help for format:
   list{
@@ -303,7 +305,7 @@ The 'list{' format combines each of its sub-tokens into a single token which jus
   "map": {
     "name": "map",
     "parser": fmt_map,
-    "desc": "Lists a set of key <-> value relations."
+    "desc": "Lists a set of key <-> value relations.",
     "help": """\
 Help for format:
   map{

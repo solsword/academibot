@@ -7,6 +7,7 @@ Storage abstraction for academibot. Backs out to an sqlite3 database and
 
 import sqlite3
 import os
+import stat
 import datetime
 import collections
 
@@ -14,17 +15,17 @@ import config
 
 import formats
 
-REQ_F = collctions.namedtuple(
+REQ_F = collections.namedtuple(
   "request",
   ["type", "value", "status"]
 )
 
-ENR_F = collctions.namedtuple(
+ENR_F = collections.namedtuple(
   "enrollment",
   ["course_id", "user", "status"]
 )
 
-SUB_F = collctions.namedtuple(
+SUB_F = collections.namedtuple(
   "submission",
   ["id", "user", "timestamp", "content", "feedback", "grade"]
 )
@@ -50,11 +51,19 @@ def opj(*args):
 # Setup functions: #
 ####################
 
-def connect_db():
+def connect_db(db_name):
   global DBCON
   if DBCON == None:
-    DBCON = sqlite3.connect(config.DATABASE)
+    chmod = False
+    if not os.path.exists(db_name):
+      chmod = True
+    DBCON = sqlite3.connect(db_name)
     DBCON.row_factory = sqlite3.Row
+    if chmod:
+      os.chmod(
+        db_name,
+        stat.S_IRWXU # 0700
+      )
 
 def close_db():
   # Note: non-committed changes will be lost!
@@ -164,8 +173,8 @@ def init_db():
 def init_submisisons():
   mkdir_p(config.SUBMISSIONS_DIR)
 
-def setup():
-  connect_db()
+def setup(db_name):
+  connect_db(db_name)
   init_db()
   init_submisisons()
 
@@ -505,7 +514,7 @@ def process_request(user, typ, value):
 def outstanding_requests(user=None):
   cur = DBCON.cursor()
   if user:
-    cur.execute("SELECT typ, value, status FROM requests;", (,))
+    cur.execute("SELECT typ, value, status FROM requests;")
   else:
     cur.execute(
       "SELECT typ, value, status FROM requests WHERE user = ?;",
@@ -568,6 +577,7 @@ A user with appropriate role/permissions must use:
 
 to approve this request.
 """.format(typ=typ, value=value, user=user)
+  )
 
 def grant_request(user, typ, value):
   cur = DBCON.cursor()
@@ -807,8 +817,8 @@ def enroll_student(course_id, user):
 
 def create_assignment(course_id, assignment):
   # Check and normalize assignment structure:
-  valid, err = formats.process_assignment(assignment):
-  if !valid:
+  valid, err = formats.process_assignment(assignment)
+  if not valid:
     return (False, err)
   raw = unparse(assignment)
 
@@ -896,12 +906,12 @@ def get_assignment_info(aid):
 
 def assignments_for(course_id, now, mode="all"):
   cur = DBCON.cursor()
-  if mode == "current"
+  if mode == "current":
     cur.execute(
       "SELECT id FROM assignments WHERE course_id = ? AND publish_at <= ? AND reject_after >= ?;",
       (course_id, now, now)
     )
-  elif mode == "future"
+  elif mode == "future":
     cur.execute(
       "SELECT id FROM assignments WHERE course_id = ? AND reject_after >= ?;",
       (course_id, now)
@@ -1014,7 +1024,7 @@ def grade_for(user, aid, now):
     )
   assignment = formats.parse(row["content"])
   valid, err = formats.process_assignment(assignment)
-  if (!valid):
+  if not valid:
     return (err, (None, "Error: could not parse assignment from database."))
 
   if now < row["late-after"]: # before the true deadline
@@ -1039,7 +1049,7 @@ def grade_for(user, aid, now):
   )
   err, (grade, feedback) = grading.assignment_grade(
     assignment,
-    row["late_after"]
+    row["late_after"],
     late_policy,
     # TODO: take multiple late submissions into account?
     (last_ot, last_late)
@@ -1078,10 +1088,7 @@ def set_grade_info(sid):
 
 def maintain_grade_info(last_ts, now):
   cur = DBCON.cursor()
-  cur.execute(
-    "SELECT id, late_after, reject_after, content FROM assignments;",
-    (,)
-  )
+  cur.execute("SELECT id, late_after, reject_after, content FROM assignments;")
   process_on_time = []
   process_late = []
   for row in list(cur.fetchall()):

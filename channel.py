@@ -16,8 +16,8 @@ class Channel:
 
   def poll(self):
     """
-    Returns a collection of messages paired with responder functions. To reply
-    to a message, the caller will give a string to the responder function.
+    Returns a collection of sender, message, response_function tuples. To reply
+    to a message, the caller will give a string to the response function.
     """
     return []
 
