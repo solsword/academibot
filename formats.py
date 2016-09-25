@@ -2,8 +2,12 @@
 formats.py
 Special parsing and unparsing functions.
 """
+
 import datetime
 import collections
+import re
+
+import config
 
 #####################
 # Format functions: #
@@ -11,7 +15,7 @@ import collections
 
 def parse_date(string):
   date_part, time_part = string.split('T')
-  year, month, dat = date_part.split('-')
+  year, month, day = date_part.split('-')
   hour, minute, second = time_part.split(':')
   try:
     dt = datetime.datetime(
@@ -29,12 +33,15 @@ def parse_date(string):
 
 def date_for(timestamp):
   try:
-    return datetime.utcfromtimestamp(timestamp)
+    return datetime.datetime.utcfromtimestamp(timestamp)
   except ValueError:
     return None
 
 def date_string(d):
   return d.strftime("%Y-%m-%dT%H:%M:%S")
+
+def parse_text(txt):
+  return parse(txt.split())
 
 def parse(words):
   if not words:
@@ -48,29 +55,39 @@ def parse(words):
     rest = parse(tail)
     return [head] + rest
 
+def _or_one_liner(txt, indent):
+  oneliner = (" "*indent) +\
+             re.sub(" +", " ", txt.replace("\n", " "))
+  if len(oneliner) <= config.LINE_LENGTH:
+    return oneliner
+  else:
+    return txt
+
 def unparse(structure, indent=0):
   """
   Note, unparse only handles string, list, dictionary, datetime, int, and float
   types. All other values are converted to strings using str().
   """
   ind = " " * indent
-  t = type(structure)
-  if t in (dict, collections.OrderedDict):
+  if isinstance(structure, dict):
     result = ind + "map{\n" + "\n".join(
-      (unparse(k, indent+2) + " :\n" + unparse(structure[k], indent+4))
+      _or_one_liner(
+        (unparse(k, indent+2) + " :\n" + unparse(structure[k], indent+4)),
+        indent+2
+      )
       for k in structure
     ) + "\n" + ind + "}"
-  elif t in (tuple, list):
+  elif isinstance(structure, tuple) or isinstance(structure, list):
     result = ind + "list{\n" + "\n".join(
-      unparse(el, indent+2) for el in structure
+      _or_one_liner(unparse(el, indent+2), indent+2) for el in structure
     ) + "\n" + ind + "}"
-  elif t == str:
+  elif isinstance(structure, str):
     if ' ' in structure:
-      result = ind + "text{\n"
-      llen = 0
+      result = ind + "text{\n" + ind
+      llen = len(ind)
       for word in structure.split():
         nlen = llen + len(word) + 1
-        if nlen > LINE_LENGTH:
+        if nlen > config.LINE_LENGTH:
           result += "\n" + ind + word
           llen = len(ind + word)
         else:
@@ -79,21 +96,17 @@ def unparse(structure, indent=0):
       result += "\n" + ind + "}"
     else:
       result = ind + structure
-  elif t == datetime.datetime:
+  elif isinstance(structure, datetime.datetime):
     result = ind + date_string(structure)
-  elif t == float:
+  elif isinstance(structure, float):
     result = ind + ("%.3f" % structure)
   else:
     result = ind + str(structure)
-  oneliner = (" "*indent-1) + re.sub("^ *", " ", result).replace("\n", "")
-  if len(oneliner <= LINE_LENGTH):
-    return oneliner
-  else:
-    return result
+  return _or_one_liner(result, indent)
 
 
 def check_submission(assignment, submission):
-  if type(submission) != dict:
+  if not isinstance(submission, dict):
     return (False, "Submission is not a map.")
   seen_answers = set()
   for key in submission:
@@ -155,24 +168,38 @@ def check_problem(problem):
       return (False, "Problem is missing required key '{}'.".format(key))
   if "flags" not in problem:
     problem["flags"] = []
-  elif type(problem["flags"]) == str:
+  elif isinstance(problem["flags"], str):
     problem["flags"] = problem["flags"].split()
-  if type(problem["answers"]) != dict:
-    return (False, "Answers must be a map.")
+  if not isinstance(problem["answers"], dict):
+    return (False, "Answers must be a map. Got:\n{}".format(problem["answers"]))
   if problem["solution"] not in problem["answers"]:
     return (False, "Solution doesn't match any of the answer keys.")
   return (True, "")
 
 def process_assignment(assignment):
+  if not isinstance(assignment, dict):
+    return (
+      False,
+      "Assignment has wrong type {}. Got:\n{}".format(
+        type(assignment),
+        assignment
+      )
+    )
   for key in [
     "name", "type", "value", "publish", "due", "late-after", "reject-after",
     "problems"
   ]:
     if key not in assignment:
-      return (False, "Assignment is missing required key '{}'.".format(key))
+      return (
+        False,
+        "Assignment is missing required key '{}'. Got:\n{}".format(
+          key,
+          assignment
+        )
+      )
   if "flags" not in assignment:
     assignment["flags"] = []
-  elif type(assignment["flags"]) == str:
+  elif isinstance(assignment["flags"], str):
     assignment["flags"] = assignment["flags"].split()
   try:
     fv = float(assignment["value"])
@@ -185,7 +212,7 @@ def process_assignment(assignment):
     )
   assignment["value"] = fv
   for key in ("publish", "due", "late-after", "reject-after"):
-    dt = commands.parse_date(assignment[key])
+    dt = parse_date(assignment[key])
     if dt:
       assignment[key] = dt
     else:

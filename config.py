@@ -22,3 +22,6 @@ TEMP_AUTH_INTERVAL = 60 * 30
 # Storage config
 DATABASE = "academibot.db"
 SUBMISSIONS_DIR = "submissions"
+
+# Line length for wrapping format unparse:
+LINE_LENGTH = 80

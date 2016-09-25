@@ -79,7 +79,7 @@ Response for :{cmd}{args}
 {result}
 """.format(
   cmd = cmd,
-  args = " " + " ".join(args) if args else "",
+  args = " " + " ".join(formats.unparse(x) for x in args) if args else "",
   result = result
 ))
 
@@ -106,7 +106,7 @@ Error: you need user authorization to {action}. Try again with the command:
 (substituting the course's authorization token for <token>, of course)
 
 Your user authentication token was sent to you when you first registered.
-"""
+""".format(user=user, action=action)
 
 def check_course_auth(context, course_id, action="access"):
   """
@@ -253,7 +253,7 @@ def cmd_auth(context, *args):
   if err:
     return err
   if purpose[0] == "#":
-    if storage.auth_token(context["now"], user, purpose, token):
+    if storage.auth_token(context["now"], user, purpose[1:], token):
       context["auth"]["tokens"].append(purpose[1:])
       return "Authentication {} successful.\n".format(purpose)
     else:
@@ -406,7 +406,7 @@ def cmd_expect(context, *args):
 
   # filter arguments:
   filtered = []
-  for a in args:
+  for a in args[1:]:
     bits = a.split(',')
     for b in bits:
       st = b.strip()
@@ -419,7 +419,7 @@ def cmd_expect(context, *args):
     results.append((f, status, message))
 
   attempted = len(results)
-  succeeded = len(r for r in results if r[1])
+  succeeded = len(list(r for r in results if r[1]))
 
   if succeeded > 0:
     tagline = "Successfully added {}/{} students".format(succeeded, attempted)
@@ -445,7 +445,7 @@ def cmd_enroll(context, *args):
   if err:
     return err
 
-  err, course_id, tag = get_course(course)
+  err, course_id, tag = get_course(user, course)
   if err:
     return err
 
@@ -518,7 +518,7 @@ Error: to create a course you must be an instructor. To request instructor statu
 An admin will need to approve your request.
 """
 
-  return delegate(storage.create_course(*args[:4]))
+  return delegate(storage.create_course(user, *args[:4]))
 
 def cmd_add_instructor(context, *args):
   user = context["user"]
@@ -550,7 +550,7 @@ def cmd_create_assignment(context, *args):
     "a course and an assignment"
   )
 
-  err, course_id, tag = get_course(course)
+  err, course_id, tag = get_course(user, course)
   if err:
     return err
 
@@ -573,10 +573,11 @@ def assignment_summary(context, course_id, status, aid):
   if not row:
     return "Error: could not find assignment #{}.".format(aid)
   name, publish, due, late, reject = row
-  due_time
-  ts = storage.now()
+  ts = context["now"]
   timeline = "<unknown>"
+  sub_status = ""
   tinfo = ""
+  # TODO: relative-time due time reporting
   if ts <= publish:
     timeline = "unpublished"
     tinfo = "will be published: {} UTC".format(
@@ -708,15 +709,15 @@ Submissions summary ({} student{}):
       err, (grade, feedback) = storage.grade_for(st, aid, context["now"])
       if err:
         errors.append(err)
-      else:
+      elif grade != None:
         grade_values.append(grade)
         if st in last_ot or st in last_late:
           submitted_grades.append(grade)
 
     if grade_values:
       grade_values = sorted(grade_values)
-      mean = avg(grade_values)
       ngv = len(grade_values)
+      mean = sum(grade_values) / ngv
       if ngv % 2:
         median = grade_values[ngv // 2]
       else:
@@ -809,7 +810,7 @@ def cmd_list_assignments(context, *args):
     if a == "-any":
       list_all = True
     else:
-      err, course_id, tag = get_course(args[0])
+      err, course_id, tag = get_course(user, args[0])
       if err:
         return err
       status = storage.enrollment_status(user, course_id)
@@ -855,7 +856,7 @@ def cmd_assignment_status(context, *args):
   err, course_id, tag = get_course(user, course)
   if err:
     return err
-  err, aid = get_assignment(course, asg)
+  err, aid = get_assignment(course_id, asg)
   if err:
     return err
   status = storage.enrollment_status(user, course_id)
@@ -878,7 +879,7 @@ def cmd_assignment(context, *args):
   err, course_id, tag = get_course(user, course)
   if err:
     return err
-  err, aid = get_assignment(course, asg)
+  err, aid = get_assignment(course_id, asg)
   if err:
     return err
   status = storage.enrollment_status(user, course_id)
@@ -887,7 +888,7 @@ def cmd_assignment(context, *args):
     return err
   return txt
 
-def cmd_view_submission(context, *args):
+def cmd_view_submissions(context, *args):
   user = context["user"]
   on_behalf_of = user
   you = "you"
@@ -913,7 +914,7 @@ def cmd_view_submission(context, *args):
   if err:
     return err
 
-  err, (course_id, tag) = get_course(user, course)
+  err, course_id, tag = get_course(user, course)
   if err:
     return err
 
@@ -934,15 +935,15 @@ def cmd_view_submission(context, *args):
   )
   otg = "  Grade info not yet available."
   lateg = "  Grade info not yet available."
-  if lot["grade"]:
+  if lot and lot.grade != None:
     otg = "  Grade: {}%\n  Feedback:\n{}".format(
-      round(100 * lot["grade"], 1),
-      lot["feedback"]
+      round(100 * lot.grade, 1),
+      lot.feedback
     )
-  if llate["grade"]:
+  if llate and llate.grade != None:
     lateg = "  Grade: {}%\n  Feedback:\n{}".format(
-      round(100 * llate["grade"], 1),
-      llate["feedback"]
+      round(100 * llate.grade, 1),
+      llate.feedback
     )
 
   if not lot and not llate:
@@ -963,11 +964,12 @@ def cmd_view_submission(context, *args):
   your.title(),
   asg,
   tag,
-  formats.date_string(formats.date_for(lot["timestamp"])),
-  "\n    ".join(lot["content"].split("\n")),
+  formats.date_string(formats.date_for(lot.timestamp)),
+  "\n    ".join(lot.content.split("\n")),
   otg
 )
   elif not lot:
+    print("LATEG")
     return """\
 {} latest submission for assignment '{}' in course {}:
   Submitted late at {} UTC.
@@ -978,8 +980,8 @@ def cmd_view_submission(context, *args):
   your.title(),
   asg,
   tag,
-  formats.date_string(formats.date_for(llate["timestamp"])),
-  "\n    ".join(llate["content"].split("\n")),
+  formats.date_string(formats.date_for(llate.timestamp)),
+  "\n    ".join(llate.content.split("\n")),
   lateg
 )
   else: # both
@@ -1021,7 +1023,7 @@ def cmd_submit(context, *args):
   if err:
     return err
 
-  err, (course_id, tag) = get_course(course)
+  err, course_id, tag = get_course(user, course)
   if err:
     return err
 
@@ -1300,7 +1302,7 @@ Usage examples:
   > It's due by the end of January 30th:
       due : 2019-1-30T23:59:59
   > But submissions won't really be marked as late until 4:00 a.m. on January 31st:
-      really-due : 2019-1-31T04:00:00
+      late-after : 2019-1-31T04:00:00
   > Even late submissions won't be accepted after February 7th:
       reject-after : 2019-2-8T00:00:00
   > The 'problems' value defines individual problems. Be careful not to include a valid command (a word starting with a ':') in any of the problem definitions. The problems are parsed as a 'list{' of 'map{' blocks (see ':help list' and ':help map').
@@ -1324,9 +1326,9 @@ Usage examples:
           type : multiple-choice
           prompt : text{ This is problem 2. Good luck. }
           answers : map{
-            1 : text { Um... }
-            2 : text { what? }
-            3 : text { This is not a good question. }
+            1 : text{ Um... }
+            2 : text{ what? }
+            3 : text{ This is not a good question. }
           }
           solution : 3
         }
@@ -1342,7 +1344,7 @@ Usage examples:
     "run" : cmd_list_assignments,
     "priority": 10,
     "argdesc": "[-any] [<course>]",
-    "desc": "Lists all assignments for the given course (or all enrolled courses).",
+    "desc": "(auth optional) Lists all assignments for the given course (or all enrolled courses).",
     "help": """\
 Help for command:
   :list-assignments
@@ -1355,7 +1357,7 @@ Usage examples:
   :list-assignments example-college/test-course/spring/2019 -any
   :list-assignments example-college/test-course/spring/2019 example-college/other-course/spring/2019
 
-Responds with a list of all currently-open assignments. You must be enrolled in a class to view assignments. If 'any' is given as an argument, closed assignments and submitted-to assignments will also be included. The list includes an assignment's status and name, information about your last submission time, and the due date or closing date. See also ':help assignment-status' and ':help submit'.
+Responds with a list of all currently-open assignments. You must be enrolled in a class to view assignments. If 'any' is given as an argument, closed assignments and submitted-to assignments will also be included. The list includes an assignment's status and name, information about your last submission time, and the due date or closing date. See also ':help assignment-status' and ':help submit'. If course auth is given, the command lists submission information.
 """
   },
   "assignment-status": {
@@ -1363,7 +1365,7 @@ Responds with a list of all currently-open assignments. You must be enrolled in 
     "run" : cmd_assignment_status,
     "priority": 10,
     "argdesc": "<course> <assignment>",
-    "desc": "Shows the status of an assignment.",
+    "desc": "(auth optional) Shows the status of an assignment.",
     "help": """\
 Help for command:
   :assignment-status
@@ -1371,7 +1373,7 @@ Help for command:
 Usage examples:
   :assignment-status example-college/test-course/spring/2000 quiz-1
 
-Responds with details about the specified assignment. These include the due date (or closing date for past-due assignments), your latest submission time, and your grade if the assignment has been graded. See also ':help list-assignments', ':help submit', and ':help assignment'.
+Responds with details about the specified assignment. These include the due date (or closing date for past-due assignments), your latest submission time, and your grade if the assignment has been graded. See also ':help list-assignments', ':help submit', and ':help assignment'. If course auth is given, additional information about grades and student submissions is displayed.
 """
   },
   "assignment": {
@@ -1390,9 +1392,9 @@ Usage examples:
 Responds with the requested assignment, including each problem and a solution template. See ':help submit' for how to submit answers.
 """ # TODO: require enrollment to view assignments/assignment statuses?
   },
-  "view-submission": {
+  "view-submissions": {
     "name": "view-submissions",
-    "run" : cmd_view_submission,
+    "run" : cmd_view_submissions,
     "priority": 10,
     "argdesc": "[<user>] <course> <assignment> [-all]",
     "desc": "(requires auth) Shows the latest submission for an assignment.",
@@ -1431,10 +1433,10 @@ Usage examples:
   :auth me@example.com c3ed3ab84e43f0c74a35b206ec43149a
   :submit example-college/test-course/fall/2004 quiz-1
   map{
-    1: A
-    2: B
-    problem-name: Answer-selection
-    Q: text{ A sentence as an answer }
+    1 : A
+    2 : B
+    problem-name : Answer-selection
+    Q : text{ A sentence as an answer }
   }
 
 Submits answers for an assignment. Requires user authentication as the sending user. You must be enrolled in the class that you're submitting to, and the assignment must be accepting submissions (see ':help assignment-status'). When you view an assignment with ':assignment' the last part of the result will include a submission template, it is a good idea to start by copying this template and then editing it to ensure your answers are correctly formatted. If your submission is badly formatted, you'll get an error message. You can use :view-submissions to check what you've submitted.

@@ -9,8 +9,8 @@ def flat_penalty_late_policy(late_value):
   return lambda x: (late_value if x > 0 else 1.0)
 
 def correct_problems(asg, sub):
-  valid, err = formats.check_submission(sub)
-  if !valid:
+  valid, err = formats.check_submission(asg, sub)
+  if not valid:
     return (err, [])
   return (
     "",
@@ -25,7 +25,7 @@ def submission_grade(asg, sub):
   incorrect = [p for p in asg["problems"] if p["name"] not in cnames]
   score = len(correct) / len(asg["problems"])
   return (
-    "" # no error
+    "", # no error
     (
       score,
       "Correct: {}\nIncorrect: {}\n".format(
@@ -43,8 +43,8 @@ def assignment_grade(asg, deadline, late_policy, submissions):
     best_scores[pn] = 0
     score_sources[pn] = "missing"
     score_status[pn] = "missing"
-  for s in submissions:
-    err, correct = correct_problems(asg, last_ot["content"])
+  for s in [x for x in submissions if x != None]:
+    err, correct = correct_problems(asg, s)
     if err:
       return (err, (None, "there was an error grading a submission"))
     cnames = [p["name"] for p in correct]
@@ -62,18 +62,19 @@ def assignment_grade(asg, deadline, late_policy, submissions):
           score_sources[pn] = s
           score_status[pn] = status
 
+  feedback = "\n".join(
+    "{}: {}{}".format(
+      p["name"],
+      "correct" if best_scores[p["name"]] > 0 else "incorrect",
+      " ({})".format(score_status[p["name"]])
+        if score_status[p["name"]] != "on-time"
+        else ""
+    ) for p in asg["problems"]
+  )
   return (
     "",
     (
       sum(best_scores.values()) / len(asg["problems"]),
-      "\n".join(
-        "{}: {}{}".format(
-          p["name"],
-          "correct" if best_scores[p["name"]] > 0 else "incorrect",
-          " ({})".format(score_status[p["name"]])
-            if score_status[p["name"]] != "on-time"
-            else ""
-        ) for p in asg["problems"]
-      )
+      feedback
     )
   )

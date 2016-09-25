@@ -14,6 +14,7 @@ import collections
 import config
 
 import formats
+import grading
 
 REQ_F = collections.namedtuple(
   "request",
@@ -227,7 +228,7 @@ def check_auth(submitted, against):
 def auth_user(user, auth):
   cur = DBCON.cursor()
   cur.execute("SELECT auth FROM users WHERE addr = ?;", (user,))
-  against = unique_result_single(cur.fetchall(), "user '{}'".format(addr))
+  against = unique_result_single(cur.fetchall(), "user '{}'".format(user))
   if against:
     return check_auth(auth, against)
   else:
@@ -325,10 +326,10 @@ def get_course_id(user, id_or_tag_or_alias, id_cache = {}):
       return unique_result_single(
         cur.fetchall(),
         "course {}/{}/{}/{}".format(
-          institution,
-          name,
-          term,
-          year
+          spl[0],
+          spl[1],
+          spl[2],
+          spl[3]
         )
       )
     else:
@@ -352,7 +353,7 @@ def course_tag(course_id, tag_cache = {}):
   )
   row = unique_result(cur.fetchall(), "course #{}".format(course_id))
   if row:
-    result = "/".join(row)
+    result = "/".join(str(x) for x in row)
     tag_cache[course_id] = result
     return result
   else:
@@ -691,6 +692,7 @@ Students can then enroll in the course by sending:
 
 :enroll {inst}/{name}/{term}/{year}
 """.format(
+  id = course_id,
   inst = institution,
   name = name,
   term = term,
@@ -820,11 +822,11 @@ def create_assignment(course_id, assignment):
   valid, err = formats.process_assignment(assignment)
   if not valid:
     return (False, err)
-  raw = unparse(assignment)
+  raw = formats.unparse(assignment)
 
   # Check that the course exists:
   cur = DBCON.cursor()
-  cur.execute("SELECT course_id FROM courses WHERE course_id = ?;",(course_id,))
+  cur.execute("SELECT id FROM courses WHERE id = ?;",(course_id,))
   valid = unique_result_single(cur.fetchall(), "course #{}".format(course_id))
   if not valid:
     return (
@@ -890,7 +892,7 @@ def get_assignment_content(aid):
   content = unique_result_single(cur.fetchall(), "assignment #{}".format(aid))
   if not content:
     return (None, "Bad assignment id #{}.".format(aid))
-  result = formats.parse(content)
+  result = formats.parse_text(content)[0]
   valid, err = formats.process_assignment(result)
   if not valid:
     return (None, err)
@@ -932,9 +934,9 @@ def assignments_for(course_id, now, mode="all"):
 #########################
 
 def submit_assignment(user, aid, now, submission):
-  assignment, err = get_assignment_content(aid)
-  if err:
-    return (False, err)
+  assignment, msg = get_assignment_content(aid)
+  if not assignment:
+    return (False, msg)
   valid, err = formats.check_submission(assignment, submission)
   if err:
     return (False, err)
@@ -945,6 +947,14 @@ def submit_assignment(user, aid, now, submission):
     (user, aid, now, raw, "", None)
   )
   DBCON.commit()
+  # DEBUG
+  cur.execute(
+    "SELECT grade FROM submissions WHERE user = ? AND assignment_id = ?;",
+    (user, aid)
+  )
+  rows = cur.fetchall()
+  for r in rows:
+    print("ROW:", r["grade"])
   return (
     True,
     "Added new submission for assignment '{}' from user {}.".format(
@@ -956,7 +966,7 @@ def submit_assignment(user, aid, now, submission):
 def get_all_submissions_to(aid):
   cur = DBCON.cursor()
   cur.execute(
-    "SELECT id, user, timestamp, content, feedback, grade FROM submissions WHERE assignment_id = ?;"
+    "SELECT id, user, timestamp, content, feedback, grade FROM submissions WHERE assignment_id = ?;",
     (aid,)
   )
   return [SUB_F(*row) for row in cur.fetchall()]
@@ -964,7 +974,7 @@ def get_all_submissions_to(aid):
 def get_submissions_for(user, aid):
   cur = DBCON.cursor()
   cur.execute(
-    "SELECT id, user, timestamp, content, feedback, grade FROM submissions WHERE user = ? AND assignment_id = ?;"
+    "SELECT id, user, timestamp, content, feedback, grade FROM submissions WHERE user = ? AND assignment_id = ?;",
     (user, aid)
   )
   return [SUB_F(*row) for row in cur.fetchall()]
@@ -983,6 +993,13 @@ def get_rep_submissions_for(user, aid, now, finalized=True, any_late=False):
   late, reject = row
 
   submissions = get_submissions_for(user, aid)
+  
+  # update grade info proactively
+  for sub in submissions:
+    # ignore success/failure
+    set_grade_info(sub[0])
+
+  submissions = get_submissions_for(user, aid)
 
   last_on_time = None
   last_late = None
@@ -992,15 +1009,17 @@ def get_rep_submissions_for(user, aid, now, finalized=True, any_late=False):
       stime <= late
     and (not finalized or now >= late)
     ):
-      if last_on_time == None or stime > last_on_time["timestamp"]:
+      if last_on_time == None or stime > last_on_time.timestamp:
         last_on_time = sub
     if (
       stime > late
     and stime <= reject
     and (not finalized or any_late or now >= reject)
     ):
-      if last_late == None or stime > last_late["timestamp"]:
+      if last_late == None or stime > last_late.timestamp:
         last_late = sub
+  # DEBUG
+  print("RS:", last_on_time, last_late)
   return last_on_time, last_late
 
 ######################
@@ -1022,18 +1041,19 @@ def grade_for(user, aid, now):
         "Error finding assignment for this submission."
       )
     )
-  assignment = formats.parse(row["content"])
+  assignment = formats.parse_text(row["content"])[0]
   valid, err = formats.process_assignment(assignment)
   if not valid:
     return (err, (None, "Error: could not parse assignment from database."))
 
-  if now < row["late-after"]: # before the true deadline
+  if now < row["late_after"]: # before the true deadline
     return (
       "",
       (
         None,
         "Grades for assignment '{}' are not available until {} UTC.".format(
-          formats.date_string(formats.date_for(row["late-after"]))
+          assignment["name"],
+          formats.date_string(formats.date_for(row["late_after"]))
         )
       )
     )
@@ -1074,11 +1094,14 @@ def set_grade_info(sid):
 
   err, (grade, feedback) = grading.submission_grade(
     assignment,
-    formats.parse(row["content"])
+    formats.parse_text(row["content"])[0]
   )
   if err:
     return (False, err)
 
+  # DEBUG
+  print("GR:", grade)
+  print("FB:", feedback)
   cur.execute(
     "UPDATE submissions SET grade = ? AND feedback = ? WHERE id = ?;",
     (grade, feedback, sid)
@@ -1092,7 +1115,10 @@ def maintain_grade_info(last_ts, now):
   process_on_time = []
   process_late = []
   for row in list(cur.fetchall()):
-    assignment = formats.process_assignment(row["content"])
+    assignment = formats.parse_text(row["content"])[0]
+    valid, err = formats.process_assignment(assignment)
+    if err:
+      return err
     if now >= row["late_after"] and last_ts < row["late_after"]:
       process_on_time.append((row["id"], row["late_after"]))
     
@@ -1131,3 +1157,4 @@ def maintain_grade_info(last_ts, now):
             msg
           )
         )
+  return None

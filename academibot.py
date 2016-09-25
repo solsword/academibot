@@ -49,7 +49,10 @@ def run_server(channels, db_name="academibot.db", interval=10):
         print("...cleaning auth tokens...")
         storage.clean_tokens()
         print("...auto-grading...")
-        storage.maintain_grade_info(last, now)
+        err = storage.maintain_grade_info(last, now)
+        if err:
+          print(err)
+          print("  ...ignoring error...")
         print("...checking channels...")
         messages = []
         for c in channels:
