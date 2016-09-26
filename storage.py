@@ -10,6 +10,7 @@ import os
 import stat
 import datetime
 import collections
+import sys
 
 import config
 
@@ -28,7 +29,7 @@ ENR_F = collections.namedtuple(
 
 SUB_F = collections.namedtuple(
   "submission",
-  ["id", "user", "timestamp", "content", "feedback", "grade"]
+  ["id", "assignment_id", "user", "timestamp", "content", "feedback", "grade"]
 )
 
 DBCON = None
@@ -148,6 +149,7 @@ def init_db():
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       course_id INTEGER NOT NULL,
       name TEXT NOT NULL,
+      flags TEXT NOT NULL,
       publish_at REAL NOT NULL,
       due_at REAL NOT NULL,
       late_after REAL,
@@ -851,10 +853,11 @@ def create_assignment(course_id, assignment):
 
   # create the assignment:
   cur.execute(
-    "INSERT INTO assignments(course_id, name, publish_at, due_at, late_after, reject_after, content) values(?, ?, ?, ?, ?, ?, ?);",
+    "INSERT INTO assignments(course_id, name, flags, publish_at, due_at, late_after, reject_after, content) values(?, ?, ?, ?, ?, ?, ?, ?);",
     (
       course_id,
       assignment["name"],
+      "list{" + ' '.join(assignment["flags"]) + "}",
       assignment["publish"].timestamp(),
       assignment["due"].timestamp(),
       assignment["late-after"].timestamp(),
@@ -901,7 +904,7 @@ def get_assignment_content(aid):
 def get_assignment_info(aid):
   cur = DBCON.cursor()
   cur.execute(
-    "SELECT name, publish_at, due_at, late_after, reject_after FROM assignments WHERE id = ?;",
+    "SELECT name, flags, publish_at, due_at, late_after, reject_after FROM assignments WHERE id = ?;",
     (aid,)
   )
   return unique_result(cur.fetchall(), "assignment #{}".format(aid))
@@ -947,14 +950,6 @@ def submit_assignment(user, aid, now, submission):
     (user, aid, now, raw, "", None)
   )
   DBCON.commit()
-  # DEBUG
-  cur.execute(
-    "SELECT grade FROM submissions WHERE user = ? AND assignment_id = ?;",
-    (user, aid)
-  )
-  rows = cur.fetchall()
-  for r in rows:
-    print("ROW:", r["grade"])
   return (
     True,
     "Added new submission for assignment '{}' from user {}.".format(
@@ -966,7 +961,7 @@ def submit_assignment(user, aid, now, submission):
 def get_all_submissions_to(aid):
   cur = DBCON.cursor()
   cur.execute(
-    "SELECT id, user, timestamp, content, feedback, grade FROM submissions WHERE assignment_id = ?;",
+    "SELECT id, assignment_id, user, timestamp, content, feedback, grade FROM submissions WHERE assignment_id = ?;",
     (aid,)
   )
   return [SUB_F(*row) for row in cur.fetchall()]
@@ -974,7 +969,7 @@ def get_all_submissions_to(aid):
 def get_submissions_for(user, aid):
   cur = DBCON.cursor()
   cur.execute(
-    "SELECT id, user, timestamp, content, feedback, grade FROM submissions WHERE user = ? AND assignment_id = ?;",
+    "SELECT id, assignment_id, user, timestamp, content, feedback, grade FROM submissions WHERE user = ? AND assignment_id = ?;",
     (user, aid)
   )
   return [SUB_F(*row) for row in cur.fetchall()]
@@ -997,14 +992,20 @@ def get_rep_submissions_for(user, aid, now, finalized=True, any_late=False):
   # update grade info proactively
   for sub in submissions:
     # ignore success/failure
-    set_grade_info(sub[0])
+    should, err = should_be_graded(sub, now)
+    if err:
+      print(err, file=sys.stderr)
+    elif should:
+      success, msg = set_grade_info(sub[0])
+      if not success:
+        print(msg, file=sys.stderr)
 
   submissions = get_submissions_for(user, aid)
 
   last_on_time = None
   last_late = None
   for sub in submissions:
-    sid, suser, stime, content, feedback, grade = sub
+    sid, aid, suser, stime, content, feedback, grade = sub
     if (
       stime <= late
     and (not finalized or now >= late)
@@ -1018,8 +1019,6 @@ def get_rep_submissions_for(user, aid, now, finalized=True, any_late=False):
     ):
       if last_late == None or stime > last_late.timestamp:
         last_late = sub
-  # DEBUG
-  print("RS:", last_on_time, last_late)
   return last_on_time, last_late
 
 ######################
@@ -1099,62 +1098,87 @@ def set_grade_info(sid):
   if err:
     return (False, err)
 
-  # DEBUG
-  print("GR:", grade)
-  print("FB:", feedback)
   cur.execute(
-    "UPDATE submissions SET grade = ? AND feedback = ? WHERE id = ?;",
+    "UPDATE submissions SET grade = ?, feedback = ? WHERE id = ?;",
     (grade, feedback, sid)
   )
   DBCON.commit()
   return (True, "Updated grade info for submission #{}.".format(sid))
 
+def should_be_graded(submission, now):
+  cur = DBCON.cursor()
+  cur.execute(
+    "SELECT id, flags, late_after, reject_after, content FROM assignments WHERE id = ?;",
+    (submission.assignment_id,)
+  );
+  row = unique_result(
+    cur.fetchall(),
+    "assignment #{}".format(submission.assignment_id)
+  )
+  aid, flags, late_after, reject_after, content = row
+  assignment = formats.parse_text(content)[0]
+  valid, err = formats.process_assignment(assignment)
+  if err:
+    return (False, "Error checking assignment status: " + err)
+
+  status = "unknown"
+  if submission.timestamp <= late_after:
+    status = "on-time"
+  elif submission.timestamp <= reject_after:
+    status = "late"
+  else:
+    status = "reject"
+
+  if status == "unknown":
+    return (
+      False,
+      "Error: unknown submission status for submission:\n{}".format(submission)
+    )
+
+  if (
+    status == "on-time"
+and (now >= late_after or "grade-immediately" in flags)
+  ):
+    return (True, "")
+
+  if (
+    status == "late"
+and (
+      now >= reject_after
+   or "grade-immediately" in flags
+   or "grade-late-immediately" in flags
+    )
+  ):
+    return (True, "")
+
+  if status == "reject":
+    return (True, "")
+
+  return (False, "")
+
 def maintain_grade_info(last_ts, now):
   cur = DBCON.cursor()
-  cur.execute("SELECT id, late_after, reject_after, content FROM assignments;")
-  process_on_time = []
-  process_late = []
-  for row in list(cur.fetchall()):
-    assignment = formats.parse_text(row["content"])[0]
-    valid, err = formats.process_assignment(assignment)
+  cur.execute(
+    "SELECT id, assignment_id, user, timestamp, content, feedback, grade FROM submissions WHERE grade == ?;",
+    (None,)
+  )
+  errors = []
+  for row in cur.fetchall():
+    should, err = should_be_graded(row, now)
     if err:
-      return err
-    if now >= row["late_after"] and last_ts < row["late_after"]:
-      process_on_time.append((row["id"], row["late_after"]))
-    
-    if (
-      "grade-late-immediately" in assignment["flags"]
-    or (now >= row["reject_after"] and last_ts < row["reject_after"])
-    ):
-      process_late.append((row["id"], row["late_after"], row["reject_after"]))
-
-  for aid, late in process_on_time:
-    cur.execute(
-      "SELECT id, grade FROM submissions WHERE assignment_id = ? AND timestamp <= ?;",
-      (aid, late)
-    )
-    for row in cur.fetchall():
+      errors.append(err)
+    elif should:
       success, msg = set_grade_info(row[0])
       if not success:
-        print(
+        errors.append(
           "Error setting grade info for submission #{}:\n  {}".format(
             row[0],
             msg
           )
         )
 
-  for aid, late, reject in process_late:
-    cur.execute(
-      "SELECT id, grade FROM submissions WHERE assignment_id = ? AND timestamp > ? AND timestamp <= ?;",
-      (aid, late, reject)
-    )
-    for row in cur.fetchall():
-      success, msg = set_grade_info(row[0])
-      if not success:
-        print(
-          "Error setting grade info for submission #{}:\n  {}".format(
-            row[0],
-            msg
-          )
-        )
+  if errors:
+    print("Errors while grading submissions:\n", file=sys.stderr)
+    for e in errors:
+      print("  " + e, file=sys.stderr)
   return None

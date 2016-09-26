@@ -486,7 +486,7 @@ post_enrolled_tests = [
         name : quiz-2
         type : quiz
         value : 1.0
-        flags : list{{ shuffle-problems }}
+        flags : list{{ shuffle-problems grade-late-immediately }}
     > This assignment will be published on January 25th at midnight (the beginning of the day, i.e., right after the end of January 24th):
         publish : 2016-1-25T00:00:00
     > It's due by the end of January 30th:

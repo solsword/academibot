@@ -572,7 +572,7 @@ def assignment_summary(context, course_id, status, aid):
   row = storage.get_assignment_info(aid)
   if not row:
     return "Error: could not find assignment #{}.".format(aid)
-  name, publish, due, late, reject = row
+  name, flags, publish, due, late, reject = row
   ts = context["now"]
   timeline = "<unknown>"
   sub_status = ""
@@ -772,7 +772,7 @@ def assignment_text(context, course_id, status, aid):
   row = storage.get_assignment_info(aid)
   if not row:
     return ("Error: assignment #{} not found.".format(aid), None)
-  name, publish, due, late, reject = row
+  name, flags, publish, due, late, reject = row
   if context["now"] < publish and status != "instructor":
     return ("Error: assignment #{} not found.".format(aid), None)
   content, msg = storage.get_assignment_content(aid)
