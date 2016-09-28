@@ -1,15 +1,16 @@
 # Server info
-IMAP_HOST = "imap.gmail.com"
-SMTP_HOST = "smtp.gmail.com"
+IMAP_HOST = "imap.pomona.edu"
+IMAP_PORT = 993
+SMTP_HOST = "smtp.pomona.edu"
 SMTP_PORT = 587
 
 # Bot's name
 NAME = "academibot"
 
 # Login info
-MYADDR = "academibot@gmail.com"
-USERNAME = "academibot"
-PASSWORD = None # set in academibot.py
+MYADDR = "cs_coursebot@pomona.edu"
+USERNAME = "CSCourseBot"
+PASSWORD = None # input by user
 
 # Seconds between mailbox checks
 #INTERVAL = 60

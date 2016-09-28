@@ -48,7 +48,7 @@ class Connection:
   def connect_imap(self):
     if (self.imap_server != None):
       raise ConnectionError("Attempt to connect IMAP while already connected.")
-    self.imap_server = imaplib.IMAP4_SSL(config.IMAP_HOST)
+    self.imap_server = imaplib.IMAP4_SSL(config.IMAP_HOST, config.IMAP_PORT)
     self.imap_server.login(self.username, self.password)
 
   def disconnect_imap(self):
