@@ -278,6 +278,20 @@ Error: unrecognized purpose '{}' for :auth.
     else:
       return "Invalid authentication for course '{}'.\n".format(tag)
 
+def cmd_user(context, *args):
+  orig_user = context["user"]
+  err, (new_user,) = unpack_args("user", args, 1, "a username")
+  if err:
+    return err
+  err = check_user_auth(context, new_user, "send commands as another user")
+  if err:
+    return err
+ 
+  context["user"] = new_user
+  return "Set user to '{}'; following commands will use this value.\n".format(
+    new_user
+  )
+
 def cmd_scramble(context, *args):
   user = context["user"]
   err, (target,) = unpack_args("scramble", args, 1, "a user or course")
@@ -969,7 +983,6 @@ def cmd_view_submissions(context, *args):
   otg
 )
   elif not lot:
-    print("LATEG")
     return """\
 {} latest submission for assignment '{}' in course {}:
   Submitted late at {} UTC.
@@ -1082,6 +1095,23 @@ Authenticates for a given purpose, enabling all commands in the same email requi
 For user authentication, use your email as the <purpose>. To authenticate with a temporary token, use the token's purpose, preceded by a '#' sign (with no space in between). For course authentication, use either the numeric course ID, the full course tag (institution/course/term/year) or an alias that you have set up for that course.
 
 You can use the ':scramble' command to reset permanent authentication tokens if you need to; temporary tokens can generally be re-requested by re-issuing the command that generated them.
+"""
+  },
+  "user": {
+    "name": "user",
+    "run" : cmd_user,
+    "priority": 2,
+    "argdesc": "<email>",
+    "desc": "(requires auth) Indicates that commands are from someone other than the sender of this email.",
+    "help": """\
+Help for command:
+  :user
+
+Usage examples:
+  :auth test@example.com 15a0e830704e89a3c80b2c2995067241
+  :user test@example.com
+
+Tells academibot who you are, when you are sending email from another account. For example, if you are registered as "test@example.com" but you have another account "test@gmail.com" from which you send mail to academibot, your mail from "test@gmail.com" should contain the command ":user test@example.com". Naturally, this requires the specified sender's authorization token.
 """
   },
   "scramble": {

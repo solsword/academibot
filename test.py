@@ -259,7 +259,7 @@ post_submit_tests = [
         "Submitted late at ",
         "Content was:",
         "map{{ 1 : same text{{ Problem 2 }} : A }}",
-        "Grade: 100% Feedback: z",
+        "Grade: 50.0%\n  Feedback:\nCorrect: 1\nIncorrect: Problem 2",
       ]
     )
   ),
@@ -530,6 +530,20 @@ post_enrolled_tests = [
         "Successfully created assignment 'quiz-2' for course {tag}."
       ],
       post_assignment_tests
+    )
+  ),
+  (
+    "nonsense@nowhere.com",
+    """
+    {sauth1}
+    :user {sname1}
+    :enroll {tag}
+    """,
+    check_and_chain(
+      [
+        "Set user to '{sname1}'",
+        "User '{sname1}' is already enrolled in course",
+      ]
     )
   ),
 ]
