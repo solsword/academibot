@@ -152,7 +152,8 @@ To halt all further messages from {address}, reply with the text ":block"
     return body
 
 class AsyncEmailChannel(channel.Channel):
-  def __init__(self, myaddr, username):
+  def __init__(self, name, myaddr, username):
+    self.name = name
     self.addr = myaddr
     self.username = username
     self.password = None
@@ -168,7 +169,8 @@ class AsyncEmailChannel(channel.Channel):
       "Enter password for user '{}':".format(self.username)
     )
     self.connection = Connection(
-      self.myaddr,
+      self.name,
+      self.addr,
       self.username,
       self.password
     )
@@ -206,7 +208,7 @@ class AsyncEmailChannel(channel.Channel):
 
     if not self.connection:
       self.connection = Connection(
-        self.myaddr,
+        self.addr,
         self.username,
         self.password
       )

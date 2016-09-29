@@ -87,7 +87,7 @@ def run_server(channels, db_name="academibot.db", interval=10):
 
 def main():
   run_server(
-    [mail.AsyncEmailChannel(config.MYADDR, config.USERNAME)],
+    [mail.AsyncEmailChannel(config.NAME, config.MYADDR, config.USERNAME)],
     config.DATABASE,
     interval=config.INTERVAL
   )
