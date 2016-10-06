@@ -5,17 +5,16 @@ SMTP_HOST = "smtp.pomona.edu"
 SMTP_PORT = 587
 
 # Bot's name
-NAME = "academibot"
+NAME = "CS Coursebot"
 
 # Login info
 MYADDR = "cs_coursebot@pomona.edu"
-USERNAME = "CSCourseBot"
+IMAP_USERNAME = "CSCourseBot"
+SMTP_USERNAME = "CSCourseBot"
 PASSWORD = None # input by user
 
 # Seconds between mailbox checks
-#INTERVAL = 60
-# DEBUG:
-INTERVAL = 10
+INTERVAL = 5
 
 # How long temporary authentication tokens last (in seconds)
 TEMP_AUTH_INTERVAL = 60 * 30

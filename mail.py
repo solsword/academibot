@@ -23,11 +23,21 @@ class ConnectionError(RuntimeError):
   pass
 
 class Connection:
-  def __init__(self, name, address, username, password):
+  def __init__(
+    self,
+    name,
+    address,
+    imap_username,
+    smtp_username,
+    imap_password,
+    smtp_password
+  ):
     self.name = name
     self.address = address
-    self.username = username
-    self.password = password
+    self.imap_username = imap_username
+    self.smtp_username = smtp_username
+    self.imap_password = imap_password
+    self.smtp_password = smtp_password
     self.smtp_server = None
     self.imap_server = None
 
@@ -39,7 +49,7 @@ class Connection:
     self.smtp_server.ehlo()
     self.smtp_server.starttls()
     self.smtp_server.ehlo()
-    self.smtp_server.login(self.username, self.password)
+    self.smtp_server.login(self.smtp_username, self.smtp_password)
 
   def disconnect_smtp(self):
     self.smtp_server.quit()
@@ -49,7 +59,7 @@ class Connection:
     if (self.imap_server != None):
       raise ConnectionError("Attempt to connect IMAP while already connected.")
     self.imap_server = imaplib.IMAP4_SSL(config.IMAP_HOST, config.IMAP_PORT)
-    self.imap_server.login(self.username, self.password)
+    self.imap_server.login(self.imap_username, self.imap_password)
 
   def disconnect_imap(self):
     self.imap_server.logout()
@@ -103,7 +113,7 @@ To halt all further messages from {address}, reply with the text ":block"
 """.format(address = self.address)
       )
     )
-    self.smtp_server.sendmail(self.username, to, msg.as_string())
+    self.smtp_server.sendmail(self.address, to, msg.as_string())
 
   def check_mail(self):
     #status, boxnames = self.imap_server.list()
@@ -152,27 +162,41 @@ To halt all further messages from {address}, reply with the text ":block"
     return body
 
 class AsyncEmailChannel(channel.Channel):
-  def __init__(self, name, myaddr, username):
+  def __init__(self, name, myaddr, imap_username, smtp_username, samepass=True):
     self.name = name
     self.addr = myaddr
-    self.username = username
-    self.password = None
+    self.imap_username = imap_username
+    self.smtp_username = smtp_username
+    self.imap_password = None
+    self.smtp_password = None
     self.connection = None
     self.outbound = []
+    self.samepass = samepass
 
   def __str__(self):
     return "an asynchronous email channel via {}".format(self.addr)
 
   def setup(self):
     # TODO: don't store password even in RAM? (in Connection as well)
-    self.password = getpass.getpass(
-      "Enter password for user '{}':".format(self.username)
-    )
+    if self.samepass:
+      self.imap_password = getpass.getpass(
+        "Enter password for user '{}':".format(self.imap_username)
+      )
+      self.smtp_password = self.imap_password
+    else:
+      self.imap_password = getpass.getpass(
+        "Enter password for IMAP user '{}':".format(self.imap_username)
+      )
+      self.smtp_password = getpass.getpass(
+        "Enter password for SMTP user '{}':".format(self.smtp_username)
+      )
     self.connection = Connection(
       self.name,
       self.addr,
-      self.username,
-      self.password
+      self.imap_username,
+      self.smtp_username,
+      self.imap_password,
+      self.smtp_password
     )
 
   def poll(self):
@@ -209,8 +233,10 @@ class AsyncEmailChannel(channel.Channel):
     if not self.connection:
       self.connection = Connection(
         self.addr,
-        self.username,
-        self.password
+        self.imap_username,
+        self.smtp_username,
+        self.imap_password,
+        self.smtp_password
       )
 
     self.connection.prepare_send()

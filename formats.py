@@ -243,6 +243,8 @@ def process_assignment(assignment):
 
 def fmt_text(words, sofar=None):
   sofar = sofar or []
+  if not words:
+    return ' '.join(sofar), []
   head, tail = words[0], words[1:]
   if head == "}":
     return ' '.join(sofar), tail
@@ -252,6 +254,8 @@ def fmt_text(words, sofar=None):
 
 def fmt_list(words, sofar=None):
   sofar = sofar or []
+  if not words:
+    return sofar, []
   head, tail = words[0], words[1:]
   if head[-1] == '{' and head[:-1] in FORMATS:
     token, trest = FORMATS[head[:-1]]["parser"](tail)
@@ -265,6 +269,8 @@ def fmt_list(words, sofar=None):
 
 def fmt_map(words, key=None, sofar=None):
   sofar = sofar or collections.OrderedDict()
+  if not words:
+    return sofar, []
   head, tail = words[0], words[1:]
   if head[-1] == '{' and head[:-1] in FORMATS:
     token, trest = FORMATS[head[:-1]]["parser"](tail)
