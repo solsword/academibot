@@ -789,13 +789,9 @@ def assignment_text(context, course_id, status, aid):
   name, flags, publish, due, late, reject = row
   if context["now"] < publish and status != "instructor":
     return ("Error: assignment #{} not found.".format(aid), None)
-  content, msg = storage.get_assignment_content(aid)
-  if not content:
+  assignment, msg = storage.get_assignment_content(aid)
+  if not assignment:
     return (msg, None)
-  assignment = formats.parse(content)
-  valid, err = formats.process_assignment(assignment)
-  if not valid:
-    return ("While parsing internal assignment content:\n" + err, None)
   result = "Assignment '{}':\n".format(assignment["name"])
   aformat = "map{\n"
   for p in assignment["problems"]:
@@ -808,13 +804,13 @@ Question '{}':
   p["prompt"],
   "\n    ".join(
     "Answer '{}': {}".format(an, atxt)
-    for an, atxt in sorted(p["answers"].values(), key=lambda x: x[0])
+    for an, atxt in sorted(p["answers"].items(), key=lambda x: x[0])
   )
 )
     aformat += "  {} : {}\n".format(p["name"], sorted(p["answers"].keys())[0])
   aformat += "}\n"
   result += "\nAnswer format:\n" + aformat
-  return result
+  return ("", result)
 
 def cmd_list_assignments(context, *args):
   user = context["user"]
@@ -1206,7 +1202,7 @@ Reverses a previous ':block' command, removing the sender from the 'blocking' li
     "name": "expect",
     "run" : cmd_expect,
     "priority": 10,
-    "argdesc": "<course>, <user1>, <user2>, ...",
+    "argdesc": "<course> <user1> <user2> ...",
     "desc": "(requires auth) Takes a course followed by a list of email addresses and populates the expected roster for a course.",
     "help": """\
 Help for command:
@@ -1326,7 +1322,7 @@ Usage examples:
       name : quiz-1
       type : quiz
       value : 1.0
-      flags : list{ shuffle-problems }
+      flags : list{ grade-late-immediately }
   > This assignment will be published on January 25th at midnight (the beginning of the day, i.e., right after the end of January 24th):
       publish : 2019-1-25T00:00:00
   > It's due by the end of January 30th:
@@ -1512,7 +1508,9 @@ Usage examples:
 
   'flags'
     This key is optional, and specifies special properties of the assignment. The following flags are recognized:
-      'shuffle-problems' -- The problems will be presented in a different order for each student.
+      'grade-immediately' -- Makes grade feedback available to students even before the submission deadline. Note that a student could look at feedback and then resubmit.
+      'grade-late-immediately' -- Makes grade feedback available to students after the submission deadline but before the assignment actually closes. Students could look at feedback and then resubmit (although any new submission would be late).
+      <NOT YET> 'shuffle-problems' -- The problems will be presented in a different order for each student.
 
   'publish'
     The date/time at which to publish the assignment. Times are given as YYYY-MM-DDTHH:MM:SS (see ':help time'). Before this time it won't be available to students.
@@ -1564,8 +1562,8 @@ The  'assignment' map format (see ':help assignment') includes a list of problem
 
   'flags'
     This key is optional, and defines special properties of the problem. The following flags are recognized:
-      'number-answers' -- Use numbers instead of the given answer keys when presenting the answers.
-      'shuffle-answers' -- When presenting the problem, the order of the answers will be different for each student.
+      <NOT YET> 'number-answers' -- Use numbers instead of the given answer keys when presenting the answers.
+      <NOT YET> 'shuffle-answers' -- When presenting the problem, the order of the answers will be different for each student.
 
   'prompt'
     This key should have a 'text{' value that describes the problem and asks a question. This content will be shown before the list of answers.

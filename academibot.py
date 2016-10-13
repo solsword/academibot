@@ -10,11 +10,11 @@ import storage
 import commands
 import config
 import traceback
+import sys
 
 import time
 
-CON = None
-SEND_QUEUE = []
+CONTEXT = "unknown"
 
 def process(sender, body, reply_function, now):
   cmds = commands.parse(body)
@@ -30,15 +30,21 @@ def process(sender, body, reply_function, now):
     reply_function(response)
 
 def run_server(channels, db_name="academibot.db", interval=10):
+  global CONTEXT
   print("Starting academibot with channels:")
+  sys.stdout.flush()
   for c in channels:
     print("  ..." + str(c) + "...")
+  sys.stdout.flush()
   print("...setting up storage...")
   storage.setup(db_name)
+  sys.stdout.flush()
   print("...setting up channels...")
   for c in channels:
     c.setup()
+  sys.stdout.flush()
   print("...done...")
+  sys.stdout.flush()
   try:
     now = 0
     last = 0
@@ -46,33 +52,56 @@ def run_server(channels, db_name="academibot.db", interval=10):
       last = now
       now = storage.now_ts()
       try:
-        print("...cleaning auth tokens...")
+        CONTEXT = "...cleaning auth tokens..."
         storage.clean_tokens()
-        print("...auto-grading...")
+        CONTEXT = "...auto-grading..."
         err = storage.maintain_grade_info(last, now)
         if err:
+          print("Error while...")
+          print(CONTEXT)
           print(err)
           print("  ...ignoring error...")
-        print("...checking channels...")
+          sys.stdout.flush()
+          sys.stderr.flush()
+        CONTEXT = "...checking channels..."
         messages = []
         for c in channels:
           messages.extend(c.poll())
-        print("...processing {} messages...".format(len(messages)))
+        CONTEXT = "...processing {} messages...".format(len(messages))
         for sender, body, rf in messages:
           try:
             process(sender, body, rf, now)
           except Exception as e:
-            print(e)
+            print("Error while...")
+            print(CONTEXT)
+            #print(e)
             traceback.print_exc()
-            print("...error processing message; ignoring...")
-        print("...flushing channels...")
+            print("...error processing message; reporting to user...")
+            rf(
+                """
+Academibot encountered an error while trying to to process your message.
+
+Please either re-send your message with different data or try to contact an
+instructor about what you should do.
+"""
+            )
+            print("...done reporting; ignoring message...")
+            sys.stdout.flush()
+            sys.stderr.flush()
+        CONTEXT = "...flushing channels..."
         for c in channels:
           c.flush()
-        print("...done; sleeping for {} seconds...".format(interval))
+        CONTEXT = "...done; sleeping for {} seconds...".format(interval)
         time.sleep(interval)
       except Exception as e:
         if type(e) == KeyboardInterrupt:
+          print("During...")
+          print(CONTEXT)
+          sys.stdout.flush()
+          sys.stderr.flush()
           raise e
+        print("Error while...")
+        print(CONTEXT)
         print(e)
         traceback.print_exc()
         print(
@@ -80,10 +109,14 @@ def run_server(channels, db_name="academibot.db", interval=10):
             str(interval)
           )
         )
+        sys.stdout.flush()
+        sys.stderr.flush()
         time.sleep(interval)
   except KeyboardInterrupt:
     pass
   print("Exiting academibot (incoming email will be ignored).")
+  sys.stdout.flush()
+  sys.stderr.flush()
 
 def main():
   run_server(

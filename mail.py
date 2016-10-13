@@ -7,6 +7,7 @@ from email.mime.text import MIMEText
 import os
 import mimetypes
 import getpass
+import html.parser
 
 import config
 import channel
@@ -155,10 +156,14 @@ To halt all further messages from {address}, reply with the text ":block"
     body = ""
     for part in message.walk():
       content_type = part.get_content_type()
-      if content_type == "text/plain" or content_type == "text/html":
+      if content_type == "text/plain":
         payload = part.get_payload()
         if payload:
           body += payload
+      #elif content_type == "text/html":
+      #  payload = part.get_payload()
+      #  if payload:
+      #    body += payload
     return body
 
 class AsyncEmailChannel(channel.Channel):

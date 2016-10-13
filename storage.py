@@ -336,7 +336,7 @@ def get_course_id(user, id_or_tag_or_alias, id_cache = {}):
       )
     else:
       cur.execute(
-        "SELECT id FROM aliases WHERE user = ? AND alias = ?;",
+        "SELECT course_id FROM aliases WHERE user = ? AND alias = ?;",
         (user, id_or_tag_or_alias)
       )
       return unique_result_single(
