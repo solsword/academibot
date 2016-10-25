@@ -625,12 +625,12 @@ def assignment_summary(context, course_id, status, aid):
     last_ot = {}
     last_late = {}
     for sub in submissions:
-      sid, suser, stime, content, feedback, grade = sub
+      sid, aid, suser, stime, content, feedback, grade = sub
       if stime <= late:
-        if suser not in last_ot or last_ot[suser]["timestamp"] < stime:
+        if suser not in last_ot or last_ot[suser].timestamp < stime:
           last_ot[suser] = sub
       else:
-        if suser not in last_late or last_late[suser]["timestamp"] < stime:
+        if suser not in last_late or last_late[suser].timestamp < stime:
           last_late[suser] = sub
     otcount = 0
     lcount = 0
@@ -669,14 +669,14 @@ Submissions summary ({} student{}):
     otcount = 0
     lcount = 0
     for sub in submissions:
-      sid, suser, stime, content, feedback, grade = sub
+      sid, aid, suser, stime, content, feedback, grade = sub
       if stime <= late:
         otcount += 1
-        if last_on_time == None or stime > last_on_time["timestamp"]:
+        if last_on_time == None or stime > last_on_time.timestamp:
           last_on_time = sub
       elif stime <= reject:
         lcount += 1
-        if last_late == None or stime > last_late["timestamp"]:
+        if last_late == None or stime > last_late.timestamp:
           last_late = sub
     if otcount == 0:
       otsubs = "no on-time submissions"
@@ -696,16 +696,16 @@ Submissions summary ({} student{}):
       sub_status = "not submitted"
     elif last_on_time == None:
       sub_status = "submitted late at {} UTC".format(
-        formats.date_string(formats.date_for(last_late["timestamp"]))
+        formats.date_string(formats.date_for(last_late.timestamp))
       )
     elif last_late == None:
       sub_status = "submitted on-time at {} UTC".format(
-        formats.date_string(formats.date_for(last_on_time["timestamp"]))
+        formats.date_string(formats.date_for(last_on_time.timestamp))
       )
     else:
       sub_status = "submitted on-time at {} UTC and late at {} UTC".format(
-        formats.date_string(formats.date_for(last_on_time["timestamp"])),
-        formats.date_string(formats.date_for(last_late["timestamp"]))
+        formats.date_string(formats.date_for(last_on_time.timestamp)),
+        formats.date_string(formats.date_for(last_late.timestamp))
       )
     sinfo = ""
     if otcount + lcount > 0:
@@ -734,23 +734,27 @@ Submissions summary ({} student{}):
       mean = sum(grade_values) / ngv
       if ngv % 2:
         median = grade_values[ngv // 2]
+      elif ngv > 1:
+        median = (grade_values[(ngv // 2) - 1] + grade_values[(ngv // 2)]) / 2
       else:
-        median = (grade_values[ngv // 2] + grade_values[(ngv // 2) + 1]) / 2
+        median = grade_values[0]
     else:
       mean = "<no grades>"
       median = "<no grades>"
 
     if submitted_grades:
       submitted_grades = sorted(submitted_grades)
-      smean = avg(submitted_grades)
+      smean = sum(submitted_grades) / len(submitted_grades)
       ngv = len(submitted_grades)
       if ngv % 2:
         smedian = submitted_grades[ngv // 2]
+      elif ngv > 1:
+        smedian = (submitted_grades[(ngv//2)-1] + submitted_grades[(ngv//2)])/2
       else:
-        smedian = (submitted_grades[ngv // 2] + submitted_grades[(ngv //2)+1])/2
+        median = grade_values[0]
     else:
-      smean = "<nothing submitted>"
-      smedian = "<nothing submitted>"
+      smean = "<nothing submitted & graded>"
+      smedian = "<nothing submitted & graded>"
 
     if errors:
       ginfo += "There were grading errors:\n{}\n".format("\n  ".join(errors))
@@ -916,7 +920,7 @@ def cmd_view_submissions(context, *args):
     args = args[1:]
 
   ( err, (course, asg) ) = unpack_args(
-    "view-submission",
+    "view-submissions",
     args,
     2,
     "a course and an assignment"

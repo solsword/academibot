@@ -1091,10 +1091,7 @@ def set_grade_info(sid):
   if not assignment:
     return (False, "Couldn't find assignment #{}.".format(row["assignment_id"]))
 
-  err, (grade, feedback) = grading.submission_grade(
-    assignment,
-    formats.parse_text(row["content"])[0]
-  )
+  err, (grade, feedback) = grading.submission_grade(assignment, row)
   if err:
     return (False, err)
 

@@ -9,6 +9,7 @@ import sys
 import os
 
 import academibot
+import config
 import channel
 import storage
 
@@ -288,6 +289,51 @@ post_submit_tests = [
         "Content was:",
         "map{{ 1 : same text{{ Problem 2 }} : A }}",
       ]
+    )
+  ),
+  (
+    TEST_INSTRUCTOR,
+    """
+    {cauth}
+    :list-assignments {tag}
+    """,
+    check_and_chain(
+      [
+        "Assignment list:",
+        "quiz-1 [open]",
+        "due at: 2016-12-31T07:59:59 UTC",
+        "Submissions summary (3 students)",
+        "missing:",
+        "median grade: <no grades>",
+        "mean submitted grade: <nothing submitted & graded>",
+        "quiz-2 [past due]",
+        "closes: 2017-01-07T08:00:00 UTC",
+        "mean grade: 0.0833",
+        "median grade: 0.0",
+        "mean submitted grade: 0.25",
+        "median submitted grade: 0.25",
+      ]
+    )
+  ),
+  (
+    TEST_STUDENTS[0],
+    """
+    {sauth1}
+    :list-assignments {tag}
+    """,
+    check_and_chain(
+			[
+				"Assignment list:",
+				"For course UoT/test-theory/Spring/2017:",
+				"quiz-1 [open]: submitted on-time at ",
+				"due at: 2016-12-31T07:59:59 UTC",
+				"you have 1 on-time submission",
+				"Grades for assignment 'quiz-1' are not available until 2016-12-31T12:00:00 UTC.",
+				"quiz-2 [past due]: submitted late at",
+				"closes: 2017-01-07T08:00:00 UTC",
+				"you have no on-time submissions and 1 late submission",
+				"grade: 25.0%"
+			]
     )
   ),
 ]
@@ -682,6 +728,7 @@ if __name__ == "__main__":
   if os.path.exists("academibot-test.db"):
     os.remove("academibot-test.db")
   tc = TestChannel(tests)
+  config.LOGFILE = "academibot-test.log"
   academibot.run_server(
     [tc],
     "academibot-test.db",

@@ -23,5 +23,8 @@ TEMP_AUTH_INTERVAL = 60 * 30
 DATABASE = "academibot.db"
 SUBMISSIONS_DIR = "submissions"
 
+# Logging config
+LOGFILE = "academibot-trace.log"
+
 # Line length for wrapping format unparse:
 LINE_LENGTH = 80

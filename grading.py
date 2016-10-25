@@ -8,17 +8,18 @@ import formats
 def flat_penalty_late_policy(late_value):
   return lambda x: (late_value if x > 0 else 1.0)
 
-def correct_problems(asg, sub):
-  valid, err = formats.check_submission(asg, sub)
+def correct_problems(asg, answers):
+  valid, err = formats.check_submission(asg, answers)
   if not valid:
     return (err, [])
   return (
     "",
-    [ p for p in asg["problems"] if sub[p["name"]] == p["solution"] ]
+    [ p for p in asg["problems"] if answers[p["name"]] == p["solution"] ]
   )
 
 def submission_grade(asg, sub):
-  err, correct = correct_problems(asg, sub)
+  content = formats.parse_text(sub["content"])[0]
+  err, correct = correct_problems(asg, content)
   if err:
     return (err, (None, "there was an error grading this submission"))
   cnames = [c["name"] for c in correct]
@@ -44,12 +45,13 @@ def assignment_grade(asg, deadline, late_policy, submissions):
     score_sources[pn] = "missing"
     score_status[pn] = "missing"
   for s in [x for x in submissions if x != None]:
-    err, correct = correct_problems(asg, s)
+    content = formats.parse_text(s.content)[0]
+    err, correct = correct_problems(asg, content)
     if err:
       return (err, (None, "there was an error grading a submission"))
     cnames = [p["name"] for p in correct]
-    credit = late_policy(s["timestamp"] - deadline)
-    status = "on-time" if s["timestamp"] <= deadline else "late"
+    credit = late_policy(s.timestamp - deadline)
+    status = "on-time" if s.timestamp <= deadline else "late"
     for pn in [p["name"] for p in asg["problems"]]:
       if pn in cnames:
         if pn not in best_scores or credit > best_scores[pn]:
