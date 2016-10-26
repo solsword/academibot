@@ -259,11 +259,12 @@ def cmd_auth(context, *args):
     else:
       return "Invalid authentication for {}.\n".format(purpose)
   elif "@" in purpose:
-    if storage.auth_user(purpose, token):
-      context["auth"]["users"].append(purpose)
-      return "Authentication as user '{}' successful.\n".format(purpose)
+    un = purpose.lower()
+    if storage.auth_user(un, token):
+      context["auth"]["users"].append(un)
+      return "Authentication as user '{}' successful.\n".format(un)
     else:
-      return "Invalid authentication for user '{}'.\n".format(purpose)
+      return "Invalid authentication for user '{}'.\n".format(un)
   else:
     err, course_id, tag = get_course(user, purpose)
     if err:
@@ -281,6 +282,7 @@ Error: unrecognized purpose '{}' for :auth.
 def cmd_user(context, *args):
   orig_user = context["user"]
   err, (new_user,) = unpack_args("user", args, 1, "a username")
+  new_user = new_user.lower()
   if err:
     return err
   err = check_user_auth(context, new_user, "send commands as another user")
@@ -298,8 +300,9 @@ def cmd_scramble(context, *args):
   if err:
     return err
   if '@' in target:
-    if target in context["auth"]["users"] and target == user:
-      token = storage.scramble_user(target)
+    un = target.lower()
+    if un in context["auth"]["users"] and un == user:
+      token = storage.scramble_user(un)
       if not token:
         return "Error: ':scramble' could not find user '{}'.\n".format(user)
       else:
@@ -307,16 +310,14 @@ def cmd_scramble(context, *args):
 Authentication for user '{user}' has been reset. The new token is:
 
 {token}
-""".format(user=target, token=token)
+""".format(user=un, token=token)
 
-    elif target in context["auth"]["users"]:
+    elif un in context["auth"]["users"]:
       return """\
 Error: to ':scramble' user '{}' you must send mail from the original account.
-""".format(target)
+""".format(un)
     else:
-      return "Error: you must authenticate to scramble user '{}'.\n".format(
-        target
-      )
+      return "Error: you must authenticate to scramble user '{}'.\n".format(un)
 
   else:
     err, course_id, tag = get_course(user, target)
@@ -425,7 +426,7 @@ def cmd_expect(context, *args):
     for b in bits:
       st = b.strip()
       if st:
-        filtered.append(st)
+        filtered.append(st.lower())
 
   results = []
   for f in filtered:
@@ -544,6 +545,7 @@ def cmd_add_instructor(context, *args):
   )
   if err:
     return err
+  instructor = instructor.lower()
 
   err, course_id, tag = get_course(user, course)
   if err:
