@@ -191,15 +191,15 @@ To interact with academibot, send it an email containing one or more commands (e
   
 Academibot recognizes the following commands:
 
-  {commandlist}
+{commandlist}
 
 Additionally, you can get help with these parsing formats:
 
-  {formatlist}
+{formatlist}
 
 Finally, there are some other general help topics:
 
-  {topiclist}
+{topiclist}
 """.format(
   commandlist = "\n".join(
     "  :{cmd}{ad} -- {d}".format(
