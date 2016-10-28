@@ -753,6 +753,14 @@ def expect_student(course_id, user):
         course_tag(course_id)
       )
     )
+  elif enr == "instructor":
+    return (
+      False,
+      "User '{}' is an instructor in course {} (!)".format(
+        user,
+        course_tag(course_id)
+      )
+    )
   elif enr != "none":
     cur = DBCON.cursor()
     cur.execute(
