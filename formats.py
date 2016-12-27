@@ -149,9 +149,9 @@ def check_submission(assignment, submission):
       ", ".join("'{}'".format(m["name"]) for m in missing[:-1])
     )
   elif len(missing) == 2:
-    minfo = "answers for problems '{}' and '{}'".format(minfo[0], minfo[1])
+    minfo = "answers for problems '{}' and '{}'".format(missing[0]["name"], missing[1]["name"])
   elif len(missing) == 1:
-    minfo = "the answer for problem '{}'".format(minfo[0])
+    minfo = "the answer for problem '{}'".format(missing[0]["name"])
 
   if minfo:
     return (

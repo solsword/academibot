@@ -75,7 +75,8 @@ def handle_commands(user, message, cmdlist, now):
   for (cmd, args) in cmdlist:
     result = COMMANDS[cmd]["run"](context, *args)
     responses.append("""\
-Response for :{cmd}{args}
+Response for:
+  :{cmd}{args}
 {result}
 """.format(
   cmd = cmd,
@@ -85,8 +86,8 @@ Response for :{cmd}{args}
 
   return (
     "Academibot reply.\n"
-  + "="*80 + "\n"
-  + ("\n" + "-"*80 + "\n").join(responses)
+  + "#"*80 + "\n"
+  + ("\n" + "."*80 + "\n").join(responses)
   )
 
 def check_user_auth(context, user, action="perform that action"):
@@ -911,6 +912,7 @@ def cmd_view_submissions(context, *args):
   your = "your"
   have = "have"
   show_all = False
+  args = list(args)
   if "-all" in args:
     args.remove("-all")
     show_all = True
@@ -1014,11 +1016,11 @@ def cmd_view_submissions(context, *args):
   your.title(),
   asg,
   tag,
-  formats.date_string(formats.date_for(lot["timestamp"])),
-  "\n    ".join(lot["content"].split("\n")),
+  formats.date_string(formats.date_for(lot.timestamp)),
+  "\n    ".join(lot.content.split("\n")),
   otg,
-  formats.date_string(formats.date_for(llate["timestamp"])),
-  "\n    ".join(llate["content"].split("\n")),
+  formats.date_string(formats.date_for(llate.timestamp)),
+  "\n    ".join(llate.content.split("\n")),
   lateg
 )
 
